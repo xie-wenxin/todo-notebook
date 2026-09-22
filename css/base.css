@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    base.css — 本子的骨骼和皮肤
    字号体系（全部 rem，改 --fs 就整体放大缩小）：
      基准 1rem = 16px × --fs
@@ -846,7 +846,9 @@ button {
 .goal.pending .goal-now { color: var(--ink-faint); }
 
 /* ══════════════════════════════════════════════════════════
-   专注面板（左划进来）
+   专注页（左划进来）
+   三块排满：顶部一行（块名+时间段） · 中间（待办名+计时器） · 底部五个小圆
+   不写任何说明文字 —— 自己用的东西。
    ══════════════════════════════════════════════════════════ */
 
 .focus {
@@ -857,267 +859,218 @@ button {
   flex-direction: column;
   background: var(--paper);
   transform: translateX(102%);
-  transition: transform .3s cubic-bezier(.2, .8, .3, 1);
+  transition: transform .28s cubic-bezier(.2, .8, .3, 1);
   will-change: transform;
 }
 .focus.show { transform: translateX(0); }
 
-/* 还没开始 / 已结算时可以退出去。开始计时之后这个按钮会消失 ——
-   那时候唯一的出口是长按 15 秒，这是你想要的隐形锁机。 */
-.f-close {
-  position: absolute;
-  z-index: 6;
-  top: calc(env(safe-area-inset-top, 0px) + .55rem);
-  left: .7rem;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  font-size: 1.2rem;
-  color: var(--ink-soft);
-  display: grid;
-  place-items: center;
-  transition: background .15s, transform .12s;
-}
-.f-close:active { background: var(--paper-deep); transform: scale(.92); }
-.focus.is-running .f-close { display: none; }
-
 .focus-main {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top, 0px) + .9rem) 1rem
+           calc(env(safe-area-inset-bottom, 0px) + 1rem);
+}
+
+/* ── ① 顶部一行：块名 + 时间段 ─────────────────────────── */
+
+.f-top {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+}
+.f-block {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.3125rem;      /* 21px */
+  font-weight: 700;
+  letter-spacing: .01em;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.f-time {
+  flex: none;
+  font-size: 1rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── ② 中间：待办名 + 大计时器 ─────────────────────────── */
+
+.f-center {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: calc(env(safe-area-inset-top, 0px) + 1.2rem) 1.2rem
-           calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
-  gap: .9rem;
-}
-
-/* ── 块信息 ────────────────────────────────────────────── */
-
-.f-head { text-align: center; width: 100%; }
-.f-block {
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: .01em;
-}
-.f-block-sub {
-  font-size: 1rem;
-  color: var(--ink-soft);
-  margin-top: .2rem;
-  line-height: 1.5;
-}
-.f-block-time {
-  font-size: 1rem;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-  margin-top: .15rem;
-}
-
-/* ── 大时钟 ────────────────────────────────────────────── */
-
-.f-clock-wrap {
+  justify-content: center;
+  gap: .55rem;
   text-align: center;
-  margin: .4rem 0 .2rem;
+  padding: .8rem 0;
 }
+
+.f-todo {
+  font-size: 1.3125rem;      /* 21px */
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  max-width: 100%;
+  word-break: break-word;
+}
+
 .f-clock {
-  font-size: clamp(2.9rem, 16vw, 4.6rem);
+  font-size: clamp(3.2rem, 20vw, 5.6rem);
   font-weight: 200;
   line-height: 1.05;
-  letter-spacing: .02em;
+  letter-spacing: .01em;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
-.f-hint {
-  font-size: 1rem;
-  color: var(--ink-faint);
-  margin-top: .35rem;
+
+.f-cdline {
+  font-size: 1.1875rem;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
-/* ── 统计小格 ──────────────────────────────────────────── */
-
-.f-stats {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: .5rem;
-  width: 100%;
-  max-width: 26rem;
-}
-.f-stat {
+/* 开始：一个大圆，按住 1.2 秒 */
+.f-start {
+  width: 6.2rem;
+  height: 6.2rem;
+  border-radius: 50%;
   background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: .55rem .7rem;
-  display: flex;
-  flex-direction: column;
-  gap: .1rem;
-}
-.f-stat-v {
-  font-size: 1.3125rem;      /* 21px */
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-.f-stat-l { font-size: .9375rem; color: var(--ink-faint); }
-.f-stat.good .f-stat-v { color: var(--accent); }
-.f-stat.warn .f-stat-v { color: #C0392B; }
-
-/* ── 专注时间线 ────────────────────────────────────────── */
-
-.f-timeline { width: 100%; max-width: 26rem; }
-.f-tl-svg {
-  display: block;
-  width: 100%;
-  height: 1.6rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--ink-faint) 16%, transparent);
-}
-.f-tl-focus { fill: var(--accent); }
-.f-tl-away  { fill: color-mix(in srgb, #C0392B 62%, transparent); }
-.f-tl-axis {
-  display: flex;
-  justify-content: space-between;
-  font-size: .9375rem;
-  color: var(--ink-faint);
-  margin-top: .25rem;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── 长按圆环 ──────────────────────────────────────────── */
-
-.f-hold {
-  position: relative;
-  width: 9.5rem;
-  height: 9.5rem;
-  margin-top: .3rem;
-  flex: none;
+  border: 2px solid var(--accent-2);
+  color: var(--accent);
+  font-size: 1.9rem;
+  padding-left: .3rem;         /* ▶ 视觉居中 */
   display: grid;
   place-items: center;
-  /* 长按期间不许系统抢走手势（回弹滚动、文字选择、拷菜单） */
   touch-action: none;
   -webkit-touch-callout: none;
-  -webkit-user-select: none;
   user-select: none;
-}
-.f-ring { position: absolute; inset: 0; width: 100%; height: 100%; }
-.f-ring-bg {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 7;
-}
-.f-ring-fg {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 7;
-  stroke-linecap: round;
-  transition: stroke .2s;
-}
-.focus.is-running .f-ring-fg { stroke: #C0392B; }
-.f-hold-text {
-  position: relative;
-  font-size: 1.0625rem;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: center;
-  padding: 0 1.4rem;
-  color: var(--ink-soft);
-}
-.f-hold.holding .f-hold-text { color: var(--ink); }
-.f-hold.holding { transform: scale(1.03); }
-
-/* ── 按钮 ──────────────────────────────────────────────── */
-
-.f-done {
-  width: 100%;
-  max-width: 26rem;
-  padding: .9rem;
-  border-radius: 13px;
-  font-size: 1.1875rem;
-  font-weight: 700;
-  color: var(--paper);
-  background: var(--accent);
-}
-.f-done:active { transform: scale(.98); opacity: .9; }
-
-.f-foot {
-  display: flex;
-  gap: .6rem;
-  width: 100%;
-  max-width: 26rem;
-  margin-top: auto;
-}
-.f-btn {
-  flex: 1;
-  padding: .7rem;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--ink-soft);
   transition: transform .12s;
 }
-.f-btn:active { transform: scale(.96); }
+.f-start:active { transform: scale(.94); }
 
-/* ── 换时间块 ──────────────────────────────────────────── */
+/* ── ③ 底部五个小圆圈 ──────────────────────────────────── */
+
+.f-bar {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .45rem;
+}
+
+.f-circle {
+  flex: 1 1 0;
+  max-width: 3.5rem;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 1.35rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  transition: transform .12s, background .18s, color .18s, border-color .18s;
+}
+.f-circle:active { transform: scale(.9); }
+.f-circle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+.f-circle.exit { font-size: 1.1rem; font-weight: 700; }
+.f-circle.exit.holding { color: var(--ink); font-weight: 700; }
+
+/* 查题开着的时候涂蓝 —— 和时间线上的蓝色对上 */
+.f-circle.lookup-on,
+#fLookup.on { background: #3D7BF0; border-color: #3D7BF0; color: #FFFFFF; }
+
+/* ── 倒计时选择 ────────────────────────────────────────── */
 
 .f-picker {
   position: absolute;
-  left: .8rem; right: .8rem;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 4.4rem);
+  left: 1rem;
+  right: 1rem;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5.4rem);
   z-index: 5;
-  max-height: 60%;
-  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .45rem;
   padding: .7rem;
   border-radius: 16px;
   background: var(--card);
   border: 1px solid var(--line);
   box-shadow: 0 18px 50px -14px rgba(0, 0, 0, .45);
 }
-.f-pick-title {
-  font-size: .9375rem;
-  color: var(--ink-faint);
-  padding: .1rem .2rem .5rem;
-}
-.f-pick-item {
-  display: flex;
-  align-items: center;
-  gap: .55rem;
-  width: 100%;
-  padding: .6rem .6rem;
+.cd-item {
+  padding: .72rem .2rem;
   border-radius: 10px;
-  text-align: left;
-  transition: background .15s;
-}
-.f-pick-item:active { background: var(--paper-deep); }
-.f-pick-item.on { background: color-mix(in srgb, var(--accent-2) 32%, transparent); }
-.f-pick-time {
-  flex: none;
-  font-size: .9375rem;
-  color: var(--ink-faint);
+  background: var(--paper-deep);
+  font-size: 1.1875rem;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
-.f-pick-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 1.0625rem;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.f-pick-now {
-  flex: none;
-  font-size: .9375rem;
-  font-weight: 600;
-  color: var(--accent);
-}
+.cd-item:active { transform: scale(.94); }
 
-/* ── 熄灯模式 ──────────────────────────────────────────── */
-/* OLED 屏上纯黑像素不发光，是真的省电，不是心理作用。
-   同时它看起来像个床头钟，半夜瞄一眼不刺眼。 */
+/* ── 结束前强制写的那一句话（框里不写任何字） ──────────── */
+
+.f-note {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: .8rem;
+  padding: calc(env(safe-area-inset-top, 0px) + 1.2rem) 1.1rem
+           calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
+  background: var(--paper);
+}
+.f-note-text {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: .9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  outline: 0;
+  resize: none;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 1.1875rem;      /* 19px */
+  line-height: 1.7;
+}
+.f-note-ok {
+  flex: none;
+  align-self: flex-end;
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 1.5rem;
+  display: grid;
+  place-items: center;
+  transition: transform .12s;
+}
+.f-note-ok:active { transform: scale(.92); }
+
+/* ── 熄灯 ──────────────────────────────────────────────── */
+/* OLED 屏上纯黑像素不发光，是真的省电 */
 
 .focus.lights-off {
   --paper: #000000;
@@ -1132,14 +1085,16 @@ button {
   --shadow: rgba(0, 0, 0, .8);
   background: #000;
 }
-.focus.lights-off .f-clock { color: #747474; }
-.focus.lights-off .f-stat { border-color: transparent; background: #070707; }
-.focus.lights-off .f-stat-v { color: #565656; }
-.focus.lights-off .f-stat-l { color: #2E2E2E; }
+.focus.lights-off .f-clock { color: #707070; }
+.focus.lights-off .f-todo { color: #3A3A3A; }
 .focus.lights-off .f-block { color: #4E4E4E; }
-.focus.lights-off .f-ring-fg { stroke: #4E4E4E; }
-.focus.lights-off .f-tl-away { fill: #2A1414; }
-
+.focus.lights-off .f-time { color: #2E2E2E; }
+.focus.lights-off .f-start {
+  background: #070707;
+  border-color: #2A2A2A;
+  color: #4A4A4A;
+}
+.focus.lights-off .f-note { background: #000; }
 /* ══════════════════════════════════════════════════════════
    日总结（右划进来）
    ══════════════════════════════════════════════════════════ */
@@ -1924,3 +1879,172 @@ button {
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* ══════════════════════════════════════════════════════════
+   主页面上的习惯打卡条（时间块下面、日记上面）
+   ══════════════════════════════════════════════════════════ */
+
+.habitbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+  margin-top: 1.1rem;
+  padding-top: .85rem;
+  border-top: 1px solid var(--line);
+}
+.habitbar:empty { display: none; }
+
+.hb-chip {
+  padding: .42rem .82rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  transition: transform .12s, background .18s, color .18s, border-color .18s;
+}
+.hb-chip:active { transform: scale(.94); }
+.hb-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.hb-add {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  border: 1px dashed var(--accent-2);
+  background: transparent;
+  color: var(--accent);
+  font-size: 1.2rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: transform .12s;
+}
+.hb-add:active { transform: scale(.9); }
+
+/* ══════════════════════════════════════════════════════════
+   日记：文字和照片一条流，照片紧跟前面的字，照片后面还能写字
+   ══════════════════════════════════════════════════════════ */
+
+.diary-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: flex-start;
+  margin-top: .2rem;
+}
+
+/* 文字块占满一行 */
+.df-text {
+  flex: 1 1 100%;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 1.1875rem;      /* 19px */
+  line-height: 1.6;
+}
+
+/* 照片块三张一行，自然流到文字下面 */
+.df-photo {
+  position: relative;
+  flex: 0 0 calc((100% - .8rem) / 3);
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+  padding: 0;
+  transition: transform .12s;
+}
+.df-photo:active { transform: scale(.95); }
+.df-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.df-photo.missing { display: grid; place-items: center; color: var(--ink-faint); }
+
+/* 加内容的两个小按钮 */
+.df-add {
+  display: flex;
+  gap: .4rem;
+  margin-top: .6rem;
+}
+.df-add button {
+  flex: 1;
+  padding: .5rem;
+  border-radius: 10px;
+  border: 1px dashed var(--accent-2);
+  background: transparent;
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 600;
+}
+.df-add button:active { transform: scale(.97); }
+/* ══════════════════════════════════════════════════════════
+   日总结：压到一屏（iPhone 15 Pro 393×852）
+   同一权重下后面的规则赢，所以这里整段覆盖前面的尺寸。
+   ══════════════════════════════════════════════════════════ */
+
+.summary-main { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + .8rem); }
+
+.sum-card {
+  margin: .45rem .6rem 0;
+  padding: .6rem .7rem;
+  border-radius: 12px;
+}
+
+.sum-h {
+  margin: 0 0 .4rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+/* 扇形图缩小，给下面的日程腾地方 */
+.donut-wrap {
+  width: min(34vw, 8rem);
+  margin: .1rem auto .4rem;
+}
+.donut-big { font-size: 1.25rem; }
+.donut-mid { font-size: .9375rem; }
+.donut-small { font-size: .9375rem; }
+
+.donut-legend { gap: .15rem; }
+.legend-row { font-size: .9375rem; }
+.legend-dot { width: .6rem; height: .6rem; }
+.sum-note { margin: .4rem 0 0; font-size: .9375rem; }
+
+/* 时间线跟在图例下面 */
+.day-timeline { margin-top: .5rem; }
+.day-tl { height: 1.5rem; }
+.day-tl-axis { font-size: .9375rem; margin-top: .1rem; }
+
+/* 日程压成一行一块 */
+.sum-blocks { gap: .3rem; }
+.sum-block { gap: .12rem; }
+.sum-block-time { font-size: .9375rem; }
+.sum-block-name { font-size: 1rem; }
+.sum-block-got { font-size: .9375rem; }
+.sum-block-sub { font-size: .9375rem; }
+.sum-bar { height: .38rem; }
+
+/* 睡眠两块并排、压扁 */
+.sleep-btn { padding: .5rem .4rem; gap: .05rem; }
+.sleep-icon { font-size: 1.3rem; }
+.sleep-label { font-size: 1rem; }
+.sleep-time { font-size: .9375rem; }
+
+.sum-foot { display: none; }

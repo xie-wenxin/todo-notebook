@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    summary.js — 日总结（右划进来）
 
    五块内容：
@@ -15,6 +15,7 @@ import {
 } from './store.js';
 import { dayFocus, byBlock, fmtMs, pct } from './focus.js';
 import { el, svgEl } from './render.js';
+import { markAsleep, clearAsleep } from './sleep.js';
 import { attachSwipe } from './gestures.js';
 
 let deps = { toast: () => {}, onChange: () => {} };
@@ -210,7 +211,6 @@ function renderHabits() {
       if (!cur.day.habits) cur.day.habits = {};
       cur.day.habits[name] = !cur.day.habits[name];
       await putDay(cur.day);
-      renderHabits();
       deps.onChange();
     });
 
@@ -237,7 +237,7 @@ function renderSleep() {
   }, [
     el('span', { class: 'sleep-icon', text: '🌙' }),
     el('span', { class: 'sleep-label', text: '我睡了' }),
-    el('span', { class: 'sleep-time', text: day.sleepAt ? hhmm(day.sleepAt) : '点一下记录' }),
+    el('span', { class: 'sleep-time', text: day.sleepAt ? hhmm(day.sleepAt) : '' }),
   ]);
 
   const wakeBtn = el('button', {
@@ -246,15 +246,18 @@ function renderSleep() {
   }, [
     el('span', { class: 'sleep-icon', text: '☀️' }),
     el('span', { class: 'sleep-label', text: '我醒了' }),
-    el('span', { class: 'sleep-time', text: day.wakeAt ? hhmm(day.wakeAt) : '点一下记录' }),
+    el('span', { class: 'sleep-time', text: day.wakeAt ? hhmm(day.wakeAt) : '' }),
   ]);
 
   sleepBtn.addEventListener('click', async () => {
-    /* 再点一下取消，免得点错了没法改 */
-    day.sleepAt = day.sleepAt ? null : Date.now();
-    await putDay(day);
+    if (day.sleepAt) {
+      await clearAsleep(day);
+      renderSleep();
+      return;
+    }
+    await markAsleep(day);
     renderSleep();
-    deps.toast(day.sleepAt ? `记下了：${hhmm(day.sleepAt)} 睡了` : '已清除睡觉时间');
+    deps.toast('晚安');
   });
 
   wakeBtn.addEventListener('click', async () => {
@@ -267,7 +270,7 @@ function renderSleep() {
   host.append(sleepBtn, wakeBtn);
 
   /* 两个都有了才算睡眠时长 */
-  let text = '点月亮记睡觉、点太阳记起床。';
+  let text = '';
   if (day.sleepAt && day.wakeAt) {
     let ms = day.wakeAt - day.sleepAt;
     if (ms < 0) ms += 24 * 3600000;     /* 跨了午夜 */
@@ -277,7 +280,7 @@ function renderSleep() {
     if (h < 7) text += ` · 比目标 7h 少 ${7 * 60 - (h * 60 + m)} 分钟`;
     else text += ' · 达标 ✅';
   } else if (day.sleepAt) {
-    text = '还没记起床时间。';
+    text = '';
   }
 
   host.appendChild(el('p', { class: 'sum-note', text }));
@@ -362,7 +365,6 @@ function renderAll() {
   $('sumTitle').textContent = d === todayKey() ? '今日总结' : '这天的小结';
   renderDonut();
   renderBlocks();
-  renderHabits();
   renderSleep();
   renderDayTimeline();
 }

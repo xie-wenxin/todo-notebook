@@ -1,43 +1,50 @@
 /* ═══════════════════════════════════════════════════════════
-   focus-ui.js — 专注面板（左划进来）
-   计时和账本全部交给 focus.js，这里只负责画和手势。
+   focus-ui.js — 专注页（左划进来）
 
-   三个状态：
-     idle     还没开始，圆环写着「长按开始」
-     running  正在计时，同一个圆环写着「长按 15 秒退出」
-     done     结算卡片
+   版面就三块，排满，不写废话：
+     ① 最上面一行：时间块名 + 时间段
+     ② 中间：待办名 + 大计时器（挨在一起）
+     ③ 底部：五个小圆圈 —— 🫘 查题 · 📴 息屏 · 🌙 熄灯 · ⏱ 倒计时 · ✕ 退出
 
-   为什么退出要长按 15 秒：这是你要的「隐形锁机」。PWA 拦不住你
-   按 Home 键，但可以让「逃出去」这件事变得足够麻烦。而且逃走会被
-   记进离开账本，有效时长直接变少 —— 代价是真的。
+   退出必须长按 15 秒；松手就归零重来。满 15 秒会强制你写一句话总结。
+
+   计时和账本全在 focus.js，这里只管画和手势。
    ═══════════════════════════════════════════════════════════ */
 
 import {
   TEMPLATE, blockPhase, todayKey, findRunningSession, putSession, newId,
 } from './store.js';
 import * as F from './focus.js';
-import { el, svgEl } from './render.js';
+import { el } from './render.js';
 import { attachSwipe } from './gestures.js';
 
-const START_HOLD_MS = 1500;
+const START_HOLD_MS = 1200;
 const EXIT_HOLD_MS = 15000;
-const RING_R = 52;
-const RING_C = 2 * Math.PI * RING_R;
 
-let deps = {
-  toast: () => {},
-  onChange: () => {},
-  getDate: () => todayKey(),
-};
-let session = null;
-let state = 'idle';
+/* 倒计时可选值：5 的倍数 */
+const COUNTDOWNS = [5, 10, 15, 20, 25, 30, 45, 60];
+
+let deps = { toast: () => {}, onChange: () => {}, getDate: () => todayKey() };
+
+let session = null;          // 当前会话（没开始就是 null）
+let state = 'idle';          // idle | running | note | done
 let pickedBlockId = null;
 let pickedTodoId = null;
 let pickedLabel = '';
+
 let tickHandle = null;
 let tickCount = 0;
 let lastPersist = 0;
 let lightsOff = false;
+
+/* 倒计时 */
+let cdEndAt = null;
+let cdDone = false;
+
+let holdTimer = null;
+let holdStart = 0;
+let holdNeed = 0;
+let holdDone = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -51,80 +58,112 @@ function clockText(ms) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function blockById(id) {
-  return TEMPLATE.find(b => b.id === id) || null;
+function mmss(ms) {
+  const t = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 }
+
+function blockById(id) { return TEMPLATE.find(b => b.id === id) || null; }
 
 function defaultBlockId() {
   const now = TEMPLATE.find(b => blockPhase(b) === 1);
   if (now) return now.id;
   const next = TEMPLATE.find(b => blockPhase(b) === 2);
-  if (next) return next.id;
-  return TEMPLATE[0].id;
+  return next ? next.id : TEMPLATE[0].id;
 }
 
 function currentBlock() {
   return blockById(session ? session.blockId : pickedBlockId);
 }
 
-/* ═══ 长按圆环 ═══════════════════════════════════════════ */
+/* ── 蜂鸣 + 震动（倒计时到点时） ───────────────────────── */
 
-let holdTimer = null;
-let holdStart = 0;
-let holdNeed = START_HOLD_MS;
-let holdDone = null;
+let audioCtx = null;
 
-function ringSet(progress) {
-  const fg = $('fRingFg');
-  if (!fg) return;
-  const p = Math.max(0, Math.min(1, progress));
-  fg.setAttribute('stroke-dasharray', String(RING_C));
-  fg.setAttribute('stroke-dashoffset', String(RING_C * (1 - p)));
-  const hold = $('fHold');
-  if (hold) hold.classList.toggle('holding', p > 0.001);
+function chime() {
+  try {
+    if (navigator.vibrate) navigator.vibrate([180, 90, 180]);
+  } catch { /* 不支持就算了 */ }
 
-  if (state === 'running') {
-    const left = Math.max(0, Math.ceil((1 - p) * (holdNeed / 1000)));
-    $('fHoldText').textContent = p > 0.001 ? `松手作废 · 还剩 ${left} 秒` : '长按 15 秒退出';
-  } else {
-    $('fHoldText').textContent = p > 0.001 ? '继续按住…' : '长按开始';
-  }
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const t0 = audioCtx.currentTime;
+    [880, 1174.7].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const at = t0 + i * 0.28;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.28, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.42);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(at);
+      osc.stop(at + 0.5);
+    });
+  } catch { /* 没声音也不影响计时 */ }
 }
 
+/* ── 长按（开始 / 退出共用一个） ───────────────────────── */
+
 function holdBegin(e) {
-  if (state === 'done') return;
+  if (state !== 'idle' && state !== 'running') return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.preventDefault();
+
   holdStart = Date.now();
-  holdDone = state === 'running' ? endAndShowResult : startSession;
+  holdDone = state === 'running' ? askNote : startSession;
   holdNeed = state === 'running' ? EXIT_HOLD_MS : START_HOLD_MS;
 
   clearInterval(holdTimer);
   holdTimer = setInterval(() => {
     const p = (Date.now() - holdStart) / holdNeed;
-    ringSet(p);
+    paintHold(p);
     if (p >= 1) {
       clearInterval(holdTimer);
       holdTimer = null;
       const fn = holdDone;
       holdDone = null;
       holdStart = 0;
-      ringSet(0);
+      paintHold(0);
       if (fn) fn();
     }
-  }, 33);
+  }, 40);
 }
 
 function holdEnd() {
-  if (!holdTimer) { ringSet(0); return; }
+  if (!holdTimer) { paintHold(0); return; }
   clearInterval(holdTimer);
   holdTimer = null;
   holdDone = null;
   holdStart = 0;
-  ringSet(0);
+  paintHold(0);
 }
 
-/* ═══ 会话生命周期 ═══════════════════════════════════════ */
+/** 长按进度画在那个小圆里，不再用大圆环 */
+function paintHold(p) {
+  const btn = holdNeed === EXIT_HOLD_MS ? $('fExit') : $('fStart');
+  const other = holdNeed === EXIT_HOLD_MS ? $('fStart') : $('fExit');
+  if (other) { other.style.background = ''; }
+  if (!btn) return;
+
+  const v = Math.max(0, Math.min(1, p));
+  if (v <= 0.001) {
+    btn.style.background = '';
+    btn.textContent = btn.dataset.icon || btn.textContent;
+    return;
+  }
+  btn.style.background = `conic-gradient(var(--accent) ${(v * 100).toFixed(1)}%, transparent 0)`;
+  if (holdNeed === EXIT_HOLD_MS) {
+    btn.textContent = String(Math.ceil((1 - v) * (EXIT_HOLD_MS / 1000)));
+  }
+}
+
+/* ── 会话生命周期 ──────────────────────────────────────── */
 
 async function persist() {
   if (!session) return;
@@ -139,37 +178,36 @@ async function startSession() {
     date: deps.getDate(),
     blockId: block ? block.id : null,
     todoId: pickedTodoId,
-    label: pickedLabel || (block ? block.title : '自由专注'),
+    label: pickedLabel || (block ? block.title : '专注'),
     startedAt: Date.now(),
-    strict: !!deps.getStrict?.(),
   });
   state = 'running';
   lastPersist = Date.now();
   await persist();
   startTick();
   render();
-  deps.toast(strictNow() ? '严格模式：一离开就作废' : '开始专注', 2000);
 }
 
-function strictNow() {
-  return !!(session && session.strict);
-}
-
-async function endAndShowResult() {
-  if (!session || session.endedAt) return;
+/** 长按 15 秒满了 —— 强制写一句话 */
+function askNote() {
+  if (!session) return;
   F.endSession(session, Date.now());
   stopTick();
+  persist();
+  state = 'note';
+  render();
+  const ta = $('fNoteText');
+  ta.value = '';
+  setTimeout(() => ta.focus(), 140);
+}
+
+async function finishWithNote() {
+  if (!session) { closeLayerAndReset(); return; }
+  session.note = ($('fNoteText').value || '').trim();
   await persist();
   state = 'done';
   render();
   deps.onChange();
-}
-
-function discardSession() {
-  /* 用于「还没开始就关掉」 */
-  session = null;
-  state = 'idle';
-  stopTick();
 }
 
 function startTick() {
@@ -179,10 +217,18 @@ function startTick() {
     if (!session || session.endedAt) return;
     tickCount++;
     renderClock();
-    if (tickCount % 5 === 0) {
-      renderStats();
-      renderTimeline();
+
+    /* 倒计时到点：响一声，但**不退出专注**，继续正计时 */
+    if (cdEndAt && !cdDone && Date.now() >= cdEndAt) {
+      cdDone = true;
+      chime();
+      F.stopMark(session, 'countdown', cdEndAt);
+      cdEndAt = null;
+      await persist();
+      deps.toast('倒计时结束 · 继续', 2400);
     }
+
+    if (tickCount % 5 === 0) renderStats();
     const now = Date.now();
     if (now - lastPersist > 20000) { lastPersist = now; await persist(); }
   }, 1000);
@@ -193,174 +239,102 @@ function stopTick() {
   tickHandle = null;
 }
 
-/* ═══ 渲染 ═══════════════════════════════════════════════ */
+/* ── 渲染 ──────────────────────────────────────────────── */
 
 function renderClock() {
   if (!session) return;
-  const r = F.summarize(session);
-  $('fClock').textContent = clockText(r.totalMs);
+  $('fClock').textContent = clockText(F.summarize(session).totalMs);
+  renderCdLine();
 }
 
-function statChip(label, value, cls = '') {
-  return el('div', { class: 'f-stat ' + cls }, [
-    el('span', { class: 'f-stat-v', text: value }),
-    el('span', { class: 'f-stat-l', text: label }),
-  ]);
+function renderCdLine() {
+  const line = $('fCdLine');
+  if (cdEndAt) {
+    line.hidden = false;
+    line.textContent = '⏱ ' + mmss(cdEndAt - Date.now());
+  } else {
+    line.hidden = true;
+  }
 }
 
 function renderStats() {
-  const host = $('fStats');
-  host.textContent = '';
-  if (!session) return;
-
-  const r = F.summarize(session);
-
-  if (state === 'running') {
-    host.appendChild(statChip('总时长', F.fmtMs(r.totalMs)));
-    host.appendChild(statChip('有效专注', F.fmtMs(r.effectiveMs), 'good'));
-    host.appendChild(statChip('离开', r.awayCount ? `${r.awayCount} 次` : '没有', r.awayCount ? 'warn' : ''));
-    host.appendChild(statChip('占比', F.pct(r.ratio), r.ratio >= 0.85 ? 'good' : 'warn'));
-  } else {
-    host.appendChild(statChip('本次有效', F.fmtMs(r.effectiveMs), 'good'));
-    host.appendChild(statChip('总时长', F.fmtMs(r.totalMs)));
-    host.appendChild(statChip('离开', r.awayCount ? `${r.awayCount} 次 / ${F.fmtMs(r.awayMs)}` : '没有', r.awayCount ? 'warn' : ''));
-    host.appendChild(statChip('专注度', F.pct(r.ratio), r.ratio >= 0.85 ? 'good' : 'warn'));
-    if (r.unknownMs > 0) {
-      host.appendChild(statChip('其中不明', F.fmtMs(r.unknownMs), 'warn'));
-    }
-  }
-}
-
-function renderTimeline() {
-  const host = $('fTimeline');
-  host.textContent = '';
-  if (!session) return;
-
-  const r = F.summarize(session);
-  if (!r.totalMs) return;
-
-  const W = 1000, H = 30;
-  const svg = svgEl('svg', {
-    viewBox: `0 0 ${W} ${H}`,
-    preserveAspectRatio: 'none',
-    class: 'f-tl-svg',
-  });
-
-  for (const seg of r.segments) {
-    const x = ((seg.from - r.startedAt) / r.totalMs) * W;
-    const w = Math.max(1.5, (seg.ms / r.totalMs) * W);
-    svg.appendChild(svgEl('rect', {
-      x: x.toFixed(2), y: 0,
-      width: w.toFixed(2), height: H,
-      rx: 4,
-      class: 'f-tl-' + seg.kind,
-    }));
-  }
-  host.appendChild(svg);
-
-  /* 头尾时间标注 */
-  const from = new Date(r.startedAt);
-  const to = new Date(r.endedAt ?? Date.now());
-  const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  host.appendChild(el('div', { class: 'f-tl-axis' }, [
-    el('span', { text: hm(from) }),
-    el('span', { text: '完整时间线' }),
-    el('span', { text: hm(to) }),
-  ]));
+  /* 这个页面不放统计 —— 统计去日总结看 */
+  const marks = session ? (session.marks || []) : [];
+  const on = (k) => marks.some(m => m.kind === k && m.to === null);
+  $('fLookup').classList.toggle('on', on('lookup'));
+  $('fScreen').classList.toggle('on', on('screenoff'));
 }
 
 function render() {
   const layer = $('focusLayer');
   const block = currentBlock();
-
-  /* 如果是从某一条待办左划进来的，标题就显示那条待办本身 */
   const todoLabel = session ? (session.todoId ? session.label : '') : pickedLabel;
-  if (todoLabel) {
-    $('fBlockName').textContent = todoLabel;
-    $('fBlockSub').textContent = block ? block.title : '';
-  } else {
-    $('fBlockName').textContent = block ? block.title : '自由专注';
-    $('fBlockSub').textContent = block ? (block.sub || '') : '没挂到时间块上';
-  }
-  $('fBlockTime').textContent = block ? `${block.start} – ${block.end}` : '';
+
+  /* ① 最上面一行：块名 + 时间段 */
+  $('fBlockName').textContent = block ? block.title : '专注';
+  $('fBlockTime').textContent = block ? `${block.start}–${block.end}` : '';
+
+  /* ② 中间：待办名 + 计时器 */
+  const label = todoLabel || (block ? block.title : '');
+  const nameEl = $('fTodoName');
+  nameEl.textContent = label;
+  nameEl.hidden = !label;
 
   layer.classList.toggle('lights-off', lightsOff);
   layer.classList.toggle('is-running', state === 'running');
-  layer.classList.toggle('is-done', state === 'done');
+  layer.classList.toggle('is-note', state === 'note');
+  layer.classList.toggle('is-idle', state === 'idle');
 
-  if (state === 'idle') {
-    $('fClock').textContent = '00:00:00';
-    $('fHint').textContent = '长按下面的圆环开始';
-    $('fHold').hidden = false;
-    $('fFoot').hidden = false;
-    $('fPick').disabled = false;
-    $('fPick').style.opacity = '';
-    $('fStats').textContent = '';
-    $('fTimeline').textContent = '';
-    $('fDoneBtn').hidden = true;
-    ringSet(0);
-    return;
-  }
+  $('fStart').hidden = state !== 'idle';
+  $('fClock').hidden = state === 'idle' || state === 'note';
+  $('fCdLine').hidden = true;
+  $('fBar').hidden = state === 'note' || state === 'done';
+  $('fNote').hidden = state !== 'note';
+  $('fCdPicker').hidden = true;
 
   if (state === 'running') {
-    $('fHint').textContent = strictNow()
-      ? '严格模式 · 离开即作废'
-      : '息屏也会继续记 · 回来接着算';
-    $('fHold').hidden = false;
-    $('fFoot').hidden = false;
-    $('fPick').disabled = true;
-    $('fPick').style.opacity = '.35';
-    $('fDoneBtn').hidden = true;
     renderClock();
     renderStats();
-    renderTimeline();
-    ringSet(0);
-    return;
   }
 
-  /* done */
-  const r = F.summarize(session);
-  $('fClock').textContent = F.fmtMs(r.effectiveMs);
-  $('fHint').textContent = '本次专注';
-  $('fHold').hidden = true;
-  $('fFoot').hidden = true;
-  $('fDoneBtn').hidden = false;
-  renderStats();
-  renderTimeline();
+  if (state === 'done') {
+    $('fClock').hidden = false;
+    $('fClock').textContent = '✓';
+    setTimeout(closeLayerAndReset, 800);
+  }
+
+  if (state === 'idle') {
+    cdEndAt = null; cdDone = false;
+    $('fLookup').classList.remove('on');
+    $('fScreen').classList.remove('on');
+    $('fLights').classList.remove('on');
+  }
 }
 
-/* ═══ 时间块选择 ═════════════════════════════════════════ */
-
-function renderPicker() {
-  const host = $('fPicker');
+function renderCountdownPicker() {
+  const host = $('fCdPicker');
   host.textContent = '';
-  host.appendChild(el('div', { class: 'f-pick-title', text: '在哪个时间段专注' }));
-
-  for (const b of TEMPLATE) {
-    const phase = blockPhase(b);
-    const btn = el('button', {
-      type: 'button',
-      class: 'f-pick-item'
-        + (b.id === pickedBlockId ? ' on' : '')
-        + (phase === 1 ? ' now' : ''),
-      'data-id': b.id,
-    }, [
-      el('span', { class: 'f-pick-time', text: `${b.start}–${b.end}` }),
-      el('span', { class: 'f-pick-name', text: b.title }),
-      phase === 1 ? el('span', { class: 'f-pick-now', text: '现在' }) : null,
-    ]);
-    btn.addEventListener('click', () => {
-      pickedBlockId = b.id;
-      pickedTodoId = null;
-      pickedLabel = '';
-      $('fPicker').hidden = true;
-      render();
-    });
-    host.appendChild(btn);
+  for (const min of COUNTDOWNS) {
+    const b = el('button', { type: 'button', class: 'cd-item', 'data-min': min, text: String(min) });
+    b.addEventListener('click', () => { startCountdown(min); host.hidden = true; });
+    host.appendChild(b);
   }
+  host.hidden = !host.hidden;
 }
 
-/* ═══ 开关 ═══════════════════════════════════════════════ */
+function startCountdown(min) {
+  if (state !== 'running') return;
+  const now = Date.now();
+  if (cdEndAt) F.stopMark(session, 'countdown', now);   /* 上一段先收尾 */
+  cdEndAt = now + min * 60000;
+  cdDone = false;
+  F.startMark(session, 'countdown', now);
+  persist();
+  renderCdLine();
+  deps.toast(`倒计时 ${min} 分钟`, 1800);
+}
+
+/* ── 开关 ──────────────────────────────────────────────── */
 
 function showLayer() {
   const layer = $('focusLayer');
@@ -371,25 +345,34 @@ function showLayer() {
 function hideLayer() {
   const layer = $('focusLayer');
   layer.classList.remove('show');
-  setTimeout(() => { layer.hidden = true; }, 300);
+  setTimeout(() => { layer.hidden = true; }, 280);
 }
 
-/** 左划进来的时候调用。从某条待办左划的话会带上 todoId 和文字 */
+function closeLayerAndReset() {
+  session = null;
+  state = 'idle';
+  lightsOff = false;
+  cdEndAt = null; cdDone = false;
+  hideLayer();
+}
+
+/** 左划进来 */
 export async function openFocus(blockId, todoId, label) {
   if (session && !session.endedAt) {
-    /* 正在计时，直接回到面板 */
     state = 'running';
     startTick();
     showLayer();
     render();
     return;
   }
-  /* 上一次的结算卡不算数了，重新开一张 */
+  /* 上次的结果不算数了，重新开 */
   session = null;
   state = 'idle';
   pickedBlockId = blockId || defaultBlockId();
   pickedTodoId = todoId || null;
   pickedLabel = String(label || '').trim();
+  cdEndAt = null; cdDone = false;
+  lightsOff = false;
   showLayer();
   render();
 }
@@ -403,7 +386,7 @@ export function isFocusRunning() {
   return !!(session && !session.endedAt);
 }
 
-/** 页面被杀掉之后，接着上次的会话继续 */
+/** 页面被杀掉之后接着上次继续 */
 export async function resumeIfAny() {
   const rec = await findRunningSession();
   if (!rec) return null;
@@ -414,17 +397,15 @@ export async function resumeIfAny() {
   const fresh = now - s.startedAt < 12 * 3600 * 1000;
 
   if (!sameDay || !fresh) {
-    /* 太久远了，直接封存，不打扰你 */
     F.endSession(s, s.lastTick || s.startedAt);
     await putSession(F.toRecord(s));
     return null;
   }
 
   if (F.isAway(s)) {
-    /* 离开期间页面被回收 —— 那段时间本来就在离开区间里，闭合它就行 */
     F.markBack(s, now);
   } else {
-    /* 页面可见时被回收的，中间那段落不明，诚实记成未知 */
+    /* 页面可见时被回收的，中间那段落不明 */
     const gap = now - (s.lastTick || s.startedAt);
     if (gap > 5000) F.addUnknown(s, gap);
   }
@@ -432,15 +413,21 @@ export async function resumeIfAny() {
   s.lastTick = now;
   session = s;
   state = 'running';
+  cdEndAt = null; cdDone = true;
   await persist();
   startTick();
   showLayer();
   render();
-  deps.toast('接着上次的专注继续', 2400);
   return s;
 }
 
-/* ═══ 接线 ═══════════════════════════════════════════════ */
+export function closeFocus() {
+  if (state === 'running') return false;
+  closeLayerAndReset();
+  return true;
+}
+
+/* ── 接线 ──────────────────────────────────────────────── */
 
 let wired = false;
 
@@ -449,43 +436,56 @@ export function initFocus(options = {}) {
   if (wired) return;
   wired = true;
 
-  const hold = $('fHold');
-  hold.addEventListener('pointerdown', holdBegin);
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => {
-    hold.addEventListener(ev, holdEnd);
-  });
-  /* 长按到底时浏览器可能弹菜单，直接灭掉 */
-  hold.addEventListener('contextmenu', (e) => e.preventDefault());
+  const startBtn = $('fStart');
+  startBtn.dataset.icon = '▶';
+  startBtn.addEventListener('pointerdown', holdBegin);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => startBtn.addEventListener(ev, holdEnd));
 
+  const exitBtn = $('fExit');
+  exitBtn.dataset.icon = '✕';
+  exitBtn.addEventListener('pointerdown', holdBegin);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => exitBtn.addEventListener(ev, holdEnd));
+  exitBtn.addEventListener('contextmenu', e => e.preventDefault());
+  startBtn.addEventListener('contextmenu', e => e.preventDefault());
+
+  /* 🫘 查题：点了之后切页面依然算专注，时间线上涂蓝 */
+  $('fLookup').addEventListener('click', () => {
+    if (state !== 'running') return;
+    const on = F.toggleMark(session, 'lookup', Date.now());
+    persist();
+    renderStats();
+    deps.toast(on ? '在查题 · 切页面也算专注' : '回到专注', 2200);
+  });
+
+  /* 📴 息屏：点了之后自己去锁屏，这段时间算专注（绿色） */
+  $('fScreen').addEventListener('click', () => {
+    if (state !== 'running') return;
+    const on = F.toggleMark(session, 'screenoff', Date.now());
+    persist();
+    renderStats();
+    deps.toast(on ? '去锁屏吧 · 这段算专注' : '息屏结束', 2200);
+  });
+
+  /* 🌙 熄灯 */
   $('fLights').addEventListener('click', () => {
     lightsOff = !lightsOff;
-    $('fLights').textContent = lightsOff ? '☀️ 开灯' : '🌙 熄灯';
+    $('fLights').classList.toggle('on', lightsOff);
     render();
   });
 
-  $('fPick').addEventListener('click', () => {
-    if (state === 'running') return;
-    renderPicker();
-    $('fPicker').hidden = !$('fPicker').hidden;
+  /* ⏱ 倒计时 */
+  $('fCd').addEventListener('click', () => {
+    if (state !== 'running') return;
+    renderCountdownPicker();
   });
 
-  $('fDoneBtn').addEventListener('click', () => {
-    session = null;
-    state = 'idle';
-    lightsOff = false;
-    $('fLights').textContent = '🌙 熄灯';
-    hideLayer();
+  /* 总结对话框：只有一个输入框 + 一个 ✓，不加任何字 */
+  $('fNoteOk').addEventListener('click', finishWithNote);
+  $('fNoteText').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finishWithNote(); }
   });
 
-  /* 还没开始时可以随时退出去：点左上角，或者往右划 */
-  $('fClose').addEventListener('click', () => closeFocus());
-
-  attachSwipe($('focusLayer'), {
-    onRight: () => closeFocus(),
-    disabled: () => state === 'running',
-  });
-
-  /* 页面切走 / 回来 —— 这是「息屏照走」的关键两行 */
+  /* 回到前台 —— 息屏状态自动结束 */
   document.addEventListener('visibilitychange', async () => {
     if (!session || session.endedAt) return;
     const now = Date.now();
@@ -493,24 +493,22 @@ export function initFocus(options = {}) {
       F.markAway(session, now);
     } else {
       F.markBack(session, now);
+      /* 你说过：再打开这个页面，息屏状态自动结束 */
+      if (F.markOpen(session, 'screenoff')) {
+        F.stopMark(session, 'screenoff', now);
+        deps.toast('息屏结束 · 继续', 1800);
+      }
+      renderCdLine();
     }
     await persist();
     renderStats();
-    renderTimeline();
   });
 
-  /* 页面即将被关闭 —— 尽量把状态落盘 */
   window.addEventListener('pagehide', () => { persist(); });
-}
 
-/** 退出专注面板。正在计时的话不许走（唯一的出口是长按 15 秒）。 */
-export function closeFocus() {
-  if (state === 'running') return false;
-  session = null;
-  state = 'idle';
-  lightsOff = false;
-  const lights = $('fLights');
-  if (lights) lights.textContent = '🌙 熄灯';
-  hideLayer();
-  return true;
+  /* 右划在还没开始时可以退出去 */
+  attachSwipe($('focusLayer'), {
+    onRight: () => closeFocus(),
+    disabled: () => state === 'running',
+  });
 }

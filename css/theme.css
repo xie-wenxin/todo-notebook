@@ -123,6 +123,45 @@
   --shadow:     rgba(42, 51, 60, .10);
 }
 
+[data-theme="sage"] {             /* 鼠尾草 */
+  --paper:      #EEF2EA;
+  --paper-deep: #E2E8DC;
+  --card:       #F6F9F3;
+  --ink:        #333D31;
+  --ink-soft:   #6C7A68;
+  --ink-faint:  #9DAA98;
+  --accent:     #6D8A64;
+  --accent-2:   #A9BFA1;
+  --line:       rgba(51, 61, 49, .13);
+  --shadow:     rgba(51, 61, 49, .10);
+}
+
+[data-theme="sand"] {             /* 沙 */
+  --paper:      #FAF3E8;
+  --paper-deep: #F2E9DA;
+  --card:       #FDF9F2;
+  --ink:        #413528;
+  --ink-soft:   #7E6E5B;
+  --ink-faint:  #B0A08B;
+  --accent:     #A8874F;
+  --accent-2:   #D6BE92;
+  --line:       rgba(65, 53, 40, .13);
+  --shadow:     rgba(65, 53, 40, .10);
+}
+
+[data-theme="plum"] {             /* 梅子 */
+  --paper:      #F7EEF2;
+  --paper-deep: #F0E2E9;
+  --card:       #FCF5F8;
+  --ink:        #3F2833;
+  --ink-soft:   #7D6470;
+  --ink-faint:  #B097A3;
+  --accent:     #8E5C75;
+  --accent-2:   #C79FB2;
+  --line:       rgba(63, 40, 51, .13);
+  --shadow:     rgba(63, 40, 51, .10);
+}
+
 /* ── 饱和系（整页就是这个颜色，字反过来是浅的） ────── */
 
 [data-theme="deepblue"] {        /* 深邃蓝 */

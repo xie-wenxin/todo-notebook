@@ -51,10 +51,13 @@ export const TARGET_HOURS = TEMPLATE.reduce((s, b) => s + b.hours, 0); // = 12
 export const DAY_START = '06:30';
 export const DAY_END = '23:30';
 
-/** 从模板里自动抽出所有习惯项 —— 加新习惯只要给块写 habit 字段 */
-export const HABITS = [...new Set(TEMPLATE.map(b => b.habit).filter(Boolean))];
+/** 从模板自动抽出的初始习惯 —— 只在第一次初始化时用一次，之后就以数据为准 */
+export const DEFAULT_HABITS = [...new Set(TEMPLATE.map(b => b.habit).filter(Boolean))];
 
-/** 习惯 → 它挂在哪一块上 */
+/* 兼容别名：还有几处在用，下一批会全部改成读 allHabitDefs() */
+export const HABITS = DEFAULT_HABITS;
+
+/** 习惯名 → 它最初挂在哪一块上（只对模板里那几个有效） */
 export function habitBlock(name) {
   return TEMPLATE.find(b => b.habit === name) || null;
 }
@@ -73,6 +76,9 @@ export const THEMES = [
   { id: 'mist',      name: '雾霾',   paper: '#EDF1F5', ink: '#2A333C', accent: '#587089', dark: false },
   { id: 'tea',       name: '茶绿',   paper: '#EEF4EC', ink: '#33422F', accent: '#6E8F63', dark: false },
   { id: 'coral',     name: '珊瑚',   paper: '#FDF0EC', ink: '#4A2A22', accent: '#C9603F', dark: false },
+  { id: 'sage',      name: '鼠尾草', paper: '#EEF2EA', ink: '#333D31', accent: '#7C9473', dark: false },
+  { id: 'sand',      name: '沙',     paper: '#FAF3E8', ink: '#413528', accent: '#BFA070', dark: false },
+  { id: 'plum',      name: '梅子',   paper: '#F7EEF2', ink: '#3F2833', accent: '#9E6B84', dark: false },
   { id: 'deepblue',  name: '深蓝',   paper: '#2A4674', ink: '#F1F6FC', accent: '#9CC4EE', dark: true },
   { id: 'forest',    name: '墨绿',   paper: '#2C5749', ink: '#F0F7F4', accent: '#9AD2BB', dark: true },
   { id: 'wine',      name: '酒红',   paper: '#813748', ink: '#FBF2F4', accent: '#F0A9B8', dark: true },
@@ -108,8 +114,83 @@ export async function loadSettings() {
 export async function saveSettings(patch) {
   const s = await loadSettings();
   Object.assign(s, patch);
+  if ('habits' in patch) _habitCache = null;
   await idbPut('settings', s);
   return s;
+}
+
+/* ── 习惯（可增删的数据，不再是写死的常量） ──────────────
+   每项带起止日期：
+     { name, start:'YYYY-MM-DD', end:null|'YYYY-MM-DD' }
+   删掉不抹历史 —— 只给它一个 end 日期，那一行就停在那儿不往后长。
+   ─────────────────────────────────────────────────────── */
+
+let _habitCache = null;
+
+export async function allHabitDefs() {
+  if (_habitCache) return _habitCache;
+  const s = await loadSettings();
+  if (!Array.isArray(s.habits) || !s.habits.length) {
+    /* 第一次：拿模板里那几个初始化，之后就以数据为准。
+       注意先把值存进局部变量 —— saveSettings 会把 _habitCache 置空，
+       直接 return _habitCache 会返回 null（这个坑踩过一次）。 */
+    const init = DEFAULT_HABITS.map(name => ({ name, start: todayKey(), end: null }));
+    _habitCache = init;
+    await saveSettings({ habits: init });
+    return init;
+  }
+  _habitCache = s.habits;
+  return _habitCache;
+}
+
+/** 现在还在用的习惯名 */
+export async function activeHabits() {
+  const list = await allHabitDefs();
+  return list.filter(h => !h.end).map(h => h.name);
+}
+
+/** 某个日期那天生效的习惯名 —— 历史按当时的清单算，不会因为今天改了而变 */
+export function habitsOn(defs, date) {
+  return defs.filter(h => h.start <= date && (!h.end || date <= h.end)).map(h => h.name);
+}
+
+export async function addHabit(name) {
+  const list = await allHabitDefs();
+  const n = String(name || '').trim();
+  if (!n) return list;
+  const exist = list.find(h => h.name === n);
+  if (exist) {
+    if (exist.end) { exist.end = null; await saveSettings({ habits: list }); }
+    return list;
+  }
+  list.push({ name: n, start: todayKey(), end: null });
+  await saveSettings({ habits: list });
+  return list;
+}
+
+export async function renameHabit(from, to) {
+  const list = await allHabitDefs();
+  const n = String(to || '').trim();
+  if (!n) return list;
+  const h = list.find(x => x.name === from);
+  if (!h || n === from) return list;
+  /* 改名 = 停用旧的 + 新开一个，这样老数据仍然挂在老名字下（可追溯） */
+  h.end = todayKey();
+  if (!list.some(x => x.name === n && !x.end)) {
+    list.push({ name: n, start: todayKey(), end: null });
+  }
+  await saveSettings({ habits: list });
+  return list;
+}
+
+export async function removeHabit(name) {
+  const list = await allHabitDefs();
+  const h = list.find(x => x.name === name);
+  if (h && !h.end) {
+    h.end = todayKey();
+    await saveSettings({ habits: list });
+  }
+  return list;
 }
 
 /* ── 一天 ──────────────────────────────────────────────── */

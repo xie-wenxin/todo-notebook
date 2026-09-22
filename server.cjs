@@ -49,6 +49,18 @@ const server = http.createServer((req, res) => {
      这里必须一致，否则本地能跑、部署上去 404。 */
   if (pathname.endsWith('/')) pathname += 'index.html';
 
+  /* 测试钩子：/_blank
+     返回一个真正的空 HTML 页面（不是 404）。
+     为什么需要：测试要先在同源上造一个旧版本的数据库，再打开 App 验证升级。
+     但 404 那种 text/plain 页面上 Chrome 会禁用 IndexedDB，
+     所以必须给一个正常的 HTML 文档。正常用不到。 */
+  if (pathname === '/_blank') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+      + '<title>blank</title></head><body>blank</body></html>');
+    return;
+  }
+
   /* 测试钩子：/_delay/毫秒
      无头浏览器会在 load 事件后才 dump DOM，而 IndexedDB 的回调是异步的，
      所以测试页里挂一张指向这里的图，就能把 load 拖住，等异步跑完。

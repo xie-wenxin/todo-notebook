@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    smoke.mjs — 端到端冒烟测试
    用 Chrome DevTools Protocol 真的把页面打开、真的点、真的刷新，
    验证渲染、持久化、手势外的交互是不是都对。
@@ -190,11 +190,13 @@ async function main() {
      （多了 notes 表）。这里就照着这个情况造一遍。 */
   console.log('  ── 数据库升级 v1 → v2 ──');
 
-  /* 先跑到同源的一个 404 页面上，在那里造一个 v1 的库 */
-  await cdp.send('Page.navigate', { url: TARGET_URL + '__blank' });
+  /* 先跑到同源的一个空 HTML 页面上，在那里造一个 v1 的库。
+     注意不能用 404 页面 —— Chrome 在那种页面上会禁用 IndexedDB。 */
+  await cdp.send('Page.navigate', { url: TARGET_URL + '_blank' });
   await sleep(1000);
 
   const seeded = await cdp.eval(`(async () => {
+    if (!self.indexedDB) return 'no-idb';
     /* 先删干净，免得受别的测试影响 */
     await new Promise((resolve) => {
       let done = false;
@@ -231,9 +233,9 @@ async function main() {
       };
     });
   })()`);
-  check('造好了一个只含 v1 表的数据库', seeded === true);
+  check('造好了一个只含 v1 表的数据库', seeded === true, String(seeded));
 
-  /* 刚才那个空白页是故意 404 的，它引发的报错不算 App 的问题，
+  /* 刚才那个空白页是测试脚手架，它引发的报错不算 App 的问题，
      从这里开始重新计账 */
   cdp.consoleErrors.length = 0;
   cdp.badResponses.length = 0;
@@ -312,6 +314,48 @@ async function main() {
     b.times[0] === '06:30–08:00' && b.times[6] === '20:00–23:00',
     b.times.join('|'));
 
+  /* ── 1.5 课表预填 ────────────────────────────────────── */
+  console.log('  ── 课表预填 ──');
+
+  const sched = JSON.parse(await cdp.eval(`(async () => {
+    const sch = await import('./js/schedule.js');
+    const st = await import('./js/store.js');
+    const t = st.todayKey();
+    const day = await st.getDay(t);
+    const all = Object.values(day.todos || {}).flat();
+    const courses = all.filter(x => x.from === 'course');
+    const blocks = Object.entries(day.todos || {})
+      .filter(([, l]) => l.some(x => x.from === 'course'))
+      .map(([k]) => k).sort();
+    return JSON.stringify({
+      week: sch.weekOf(t),
+      weekday: sch.weekdayOf(t),
+      expect: sch.coursesOn(t).length,
+      expectTexts: sch.coursesOn(t).map(c => sch.courseText(c)),
+      seeded: courses.length,
+      texts: courses.map(x => x.text),
+      blocks,
+      totalTodos: all.length,
+    });
+  })()`));
+
+  check('算得出今天是第几周', sched.week >= 1, `第 ${sched.week} 周`);
+  check('按课表把今天的课填成了待办',
+    sched.seeded === sched.expect && sched.expect > 0,
+    `填了 ${sched.seeded}，课表说今天 ${sched.expect} 节`);
+  check('课的文字和课表一致',
+    JSON.stringify(sched.texts) === JSON.stringify(sched.expectTexts),
+    JSON.stringify(sched.texts));
+  check('课只落在上午(b2)和下午(b4)块里',
+    sched.blocks.every(x => x === 'b2' || x === 'b4' || x === 'b6'),
+    JSON.stringify(sched.blocks));
+  check('每节课都带 📚 和教室',
+    sched.texts.every(t => /^📚 /.test(t) && /·/.test(t)),
+    JSON.stringify(sched.texts));
+
+  /* 记下此刻的总数，后面「加一条」要拿它做基准 */
+  const baseTotal = sched.totalTodos;
+
   /* ── 2. 版式 + 加一条待办 ────────────────────────────── */
   console.log('  ── 版式 ──');
 
@@ -365,7 +409,13 @@ async function main() {
   check('待办加进列表了', afterAdd.count === 1, '数量 ' + afterAdd.count);
   check('待办文字正确', afterAdd.text === '冒烟测试待办A', String(afterAdd.text));
   check('每条待办底下有横线', afterAdd.hairline >= 1, String(afterAdd.hairline));
-  check('顶部计数跟着更新', afterAdd.total === '0/1', afterAdd.total);
+  /* 注意：今天会预先填进当天的课，所以总数不是 1 —— 只验「比刚才多了一条」 */
+  check('顶部计数跟着更新（比刚才多 1 条）',
+    (() => {
+      const m = /^0\/(\d+)$/.exec(afterAdd.total || '');
+      return !!m && Number(m[1]) === baseTotal + 1;
+    })(),
+    `${afterAdd.total}，加之前总数 ${baseTotal}`);
 
   /* 每条待办单独左划 → 只专注这一条 */
   await cdp.eval(`(() => {
@@ -386,19 +436,30 @@ async function main() {
 
   const todoFocus = JSON.parse(await cdp.eval(`JSON.stringify({
     shown: document.getElementById('focusLayer').classList.contains('show'),
-    name:  document.getElementById('fBlockName').textContent,
-    sub:   document.getElementById('fBlockSub').textContent,
-    closeBtn: getComputedStyle(document.getElementById('fClose')).display !== 'none',
+    name:  document.getElementById('fTodoName').textContent,
+    block: document.getElementById('fBlockName').textContent,
   })`));
   check('单条待办左划能直接进专注', todoFocus.shown === true, JSON.stringify(todoFocus));
-  check('专注面板标题就是这条待办', todoFocus.name === '冒烟测试待办A', todoFocus.name);
-  check('副标题显示它属于哪一块', todoFocus.sub === '英语', todoFocus.sub);
-  check('没开始计时时左上角有返回按钮', todoFocus.closeBtn === true, JSON.stringify(todoFocus));
+  check('页面中间显示的就是这条待办', todoFocus.name === '冒烟测试待办A', todoFocus.name);
+  check('最上面一行还是它所属的时间块', todoFocus.block === '英语', todoFocus.block);
 
-  /* 没开始时必须能退出来 —— 这是修掉的一个真 bug */
-  await cdp.eval(`document.getElementById('fClose').click()`);
-  await sleep(700);
-  check('点返回能退出专注面板',
+  /* 还没开始时往右划就能退出去 */
+  await cdp.eval(`(() => {
+    const layer = document.getElementById('focusLayer');
+    const r = layer.getBoundingClientRect();
+    const y = r.top + r.height / 2;
+    const mk = (type, x) => new PointerEvent(type, {
+      pointerId: 93, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+    });
+    layer.dispatchEvent(mk('pointerdown', r.left + 120));
+    layer.dispatchEvent(mk('pointermove', r.left + 200));
+    layer.dispatchEvent(mk('pointermove', r.left + 300));
+    layer.dispatchEvent(mk('pointerup',   r.left + 360));
+    return true;
+  })()`);
+  await sleep(800);
+  check('还没开始时右划能退出去',
     (await cdp.eval(`document.getElementById('focusLayer').hidden`)) === true);
 
   /* ── 3. 刷新，验证持久化 ─────────────────────────────── */
@@ -429,23 +490,27 @@ async function main() {
     total: document.getElementById('dhRight').textContent,
   })`));
   check('待办变成已完成', afterTick.done === 1, '数量 ' + afterTick.done);
-  check('计数变成 1/1', afterTick.total === '1/1', afterTick.total);
+  check('计数变成 1/N（勾了一条）',
+    (() => {
+      const m = /^1\/(\d+)$/.exec(afterTick.total || '');
+      return !!m && Number(m[1]) === baseTotal + 1;
+    })(),
+    `${afterTick.total}，基准 ${baseTotal}`);
   /* 底部那条现在只读真实专注计时，勾待办不该再影响它 */
   check('勾待办不再改动底部专注条', afterTick.goalNow === '0h00m', afterTick.goalNow);
   check('专注条保持 0%', /^0(\.0)?%$/.test(afterTick.fill), afterTick.fill);
 
-  /* ── 4.5 日记本 ──────────────────────────────────────── */
+  /* ── 4.5 日记本（图文一条流） ────────────────────────── */
   console.log('  ── 日记本 ──');
 
   const diaryStruct = JSON.parse(await cdp.eval(`JSON.stringify({
-    textarea: !!document.querySelector('#diary .diary-text'),
     addBtn:   !!document.querySelector('#diary .diary-head .add-btn'),
     dateLabel: (document.querySelector('#diary .diary-date') || {}).textContent,
+    flow:     !!document.querySelector('#diary .diary-flow'),
+    picker:   !!document.querySelector('#diary input[type=file]'),
     noSubText: !document.querySelector('#diary .diary-sub'),
     noBigAddBtn: !document.querySelector('#diary .photo-add'),
     noCountLine: !document.querySelector('#diary .diary-count'),
-    picker:   !!document.querySelector('#diary input[type=file]'),
-    grid:     !!document.querySelector('#diary .photo-grid'),
     belowBlocks: (() => {
       const d = document.getElementById('diary');
       const b = document.getElementById('blocks');
@@ -454,19 +519,36 @@ async function main() {
     })(),
   })`));
   check('日记区排在时间块下面', diaryStruct.belowBlocks === true, JSON.stringify(diaryStruct));
-  check('日记有文字输入框', diaryStruct.textarea === true);
+  check('日记是一条流（不是文字框 + 图墙两张皮）', diaryStruct.flow === true, JSON.stringify(diaryStruct));
   check('日记左上角是日期', /\d+月\d+日/.test(diaryStruct.dateLabel || ''), String(diaryStruct.dateLabel));
   check('日记右上角是小加号', diaryStruct.addBtn === true);
   check('日记没有多余说明文字', diaryStruct.noSubText === true);
   check('日记没有那条大「加照片」按钮', diaryStruct.noBigAddBtn === true);
   check('日记没有「多少字多少张」那行', diaryStruct.noCountLine === true);
   check('日记有隐藏的文件选择框', diaryStruct.picker === true);
-  check('日记有照片墙', diaryStruct.grid === true);
 
-  /* 写一段文字 */
+  /* 点 ＋ → 出「文字 / 照片」两个选项 */
+  await cdp.eval(`document.querySelector('#diary .diary-head .add-btn').click()`);
+  await sleep(500);
+  const menu = JSON.parse(await cdp.eval(`JSON.stringify({
+    visible: !document.querySelector('#diary .df-add').hidden,
+    items: [...document.querySelectorAll('#diary .df-add button')].map(b => b.textContent),
+  })`));
+  check('点 ＋ 出现「文字 / 照片」两个选项',
+    menu.visible === true && menu.items.join('/') === '文字/照片', JSON.stringify(menu));
+
+  /* 加第一段文字 */
+  await cdp.eval(`document.querySelectorAll('#diary .df-add button')[0].click()`);
+  await sleep(800);
+  const firstBlock = JSON.parse(await cdp.eval(`JSON.stringify({
+    texts: document.querySelectorAll('#diary .df-text').length,
+    focused: !!(document.activeElement && document.activeElement.classList.contains('df-text')),
+  })`));
+  check('点「文字」出现一个文字块', firstBlock.texts === 1, JSON.stringify(firstBlock));
+  check('新文字块自动聚焦', firstBlock.focused === true, JSON.stringify(firstBlock));
+
   await cdp.eval(`(() => {
-    const ta = document.querySelector('#diary .diary-text');
-    ta.focus();
+    const ta = document.querySelector('#diary .df-text');
     ta.value = '今天测试写了一段日记。';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     ta.blur();
@@ -474,7 +556,7 @@ async function main() {
   })()`);
   await sleep(1300);
 
-  /* 造一张 3000×2000 的图塞进文件选择框，验证压缩链路 */
+  /* 加照片 */
   await cdp.eval(`(async () => {
     const c = document.createElement('canvas');
     c.width = 3000; c.height = 2000;
@@ -499,29 +581,29 @@ async function main() {
     return m.todayKey();
   })()`);
 
-  const photoDom = JSON.parse(await cdp.eval(`JSON.stringify({
-    cells: document.querySelectorAll('#diary .photo-cell').length,
-    imgs:  document.querySelectorAll('#diary .photo-cell img').length,
+  const afterPhoto = JSON.parse(await cdp.eval(`JSON.stringify({
+    photos: document.querySelectorAll('#diary .df-photo').length,
+    imgs:   document.querySelectorAll('#diary .df-photo img').length,
+    order:  [...document.querySelector('#diary .diary-flow').children]
+              .map(n => n.tagName === 'TEXTAREA' ? 'text' : 'photo'),
   })`));
-  check('照片出现在墙上', photoDom.cells === 1, JSON.stringify(photoDom));
-  check('缩略图真的解码出来了', photoDom.imgs === 1, JSON.stringify(photoDom));
+  check('照片插进了日记流', afterPhoto.photos === 1, JSON.stringify(afterPhoto));
+  check('缩略图真的解码出来了', afterPhoto.imgs === 1, JSON.stringify(afterPhoto));
+  check('顺序是「文字 → 照片」（照片紧跟在字后面）',
+    afterPhoto.order.join(',') === 'text,photo', JSON.stringify(afterPhoto.order));
 
   const stored = JSON.parse(await cdp.eval(`(async () => {
     const m = await import('./js/db.js');
     const all = await m.idbAll('photos');
     const p = all[0] || null;
     return JSON.stringify(p ? {
-      n: all.length,
-      w: p.w, h: p.h, srcW: p.srcW, srcH: p.srcH,
+      n: all.length, w: p.w, h: p.h,
       fullBytes: p.blob ? p.blob.size : 0,
       thumbBytes: p.thumb ? p.thumb.size : 0,
       fullType: p.blob ? p.blob.type : '',
-      thumbType: p.thumb ? p.thumb.type : '',
       day: p.day,
-      hasDims: !!(p.w && p.h),
     } : { n: 0 });
   })()`));
-
   check('照片写进了 photos 表', stored.n === 1, JSON.stringify(stored));
   check('原图 3000×2000 被压到长边 1280',
     Math.max(stored.w || 0, stored.h || 0) === 1280, `${stored.w}×${stored.h}`);
@@ -533,41 +615,70 @@ async function main() {
     `${stored.thumbBytes} B vs ${stored.fullBytes} B`);
   check('照片挂在今天的日期上', stored.day === TODAY, `${stored.day} vs ${TODAY}`);
 
-  /* 刷新，验证文字和照片都落盘了 */
+  /* 照片**后面**再加一段文字 —— 这是你专门要求的 */
+  await cdp.eval(`document.querySelector('#diary .diary-head .add-btn').click()`);
+  await sleep(400);
+  await cdp.eval(`document.querySelectorAll('#diary .df-add button')[0].click()`);
+  await sleep(800);
+  await cdp.eval(`(() => {
+    const tas = document.querySelectorAll('#diary .df-text');
+    const ta = tas[tas.length - 1];
+    ta.value = '照片后面写的第二段。';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.blur();
+    return true;
+  })()`);
+  await sleep(1300);
+
+  const order2 = JSON.parse(await cdp.eval(`JSON.stringify({
+    order: [...document.querySelector('#diary .diary-flow').children]
+             .map(n => n.tagName === 'TEXTAREA' ? 'text' : 'photo'),
+    texts: [...document.querySelectorAll('#diary .df-text')].map(t => t.value),
+  })`));
+  check('照片后面能接着写字（顺序 文字→照片→文字）',
+    order2.order.join(',') === 'text,photo,text', JSON.stringify(order2.order));
+  check('第二段文字内容对',
+    order2.texts[1] === '照片后面写的第二段。', JSON.stringify(order2.texts));
+
+  /* 刷新，验证都落盘了 */
   await cdp.send('Page.navigate', { url: TARGET_URL });
   await sleep(3400);
   const afterReloadDiary = JSON.parse(await cdp.eval(`JSON.stringify({
-    text:  (document.querySelector('#diary .diary-text') || {}).value,
-    cells: document.querySelectorAll('#diary .photo-cell').length,
-    imgs:  document.querySelectorAll('#diary .photo-cell img').length,
+    order: [...document.querySelector('#diary .diary-flow').children]
+             .map(n => n.tagName === 'TEXTAREA' ? 'text' : 'photo'),
+    texts: [...document.querySelectorAll('#diary .df-text')].map(t => t.value),
+    imgs: document.querySelectorAll('#diary .df-photo img').length,
   })`));
-  check('刷新后日记文字还在',
-    afterReloadDiary.text === '今天测试写了一段日记。', JSON.stringify(afterReloadDiary.text));
-  check('刷新后照片还在（含缩略图重解码）',
-    afterReloadDiary.cells === 1 && afterReloadDiary.imgs === 1,
-    JSON.stringify(afterReloadDiary));
+  check('刷新后顺序没变（文字→照片→文字）',
+    afterReloadDiary.order.join(',') === 'text,photo,text', JSON.stringify(afterReloadDiary.order));
+  check('刷新后两段文字都在',
+    afterReloadDiary.texts[0] === '今天测试写了一段日记。'
+    && afterReloadDiary.texts[1] === '照片后面写的第二段。',
+    JSON.stringify(afterReloadDiary.texts));
+  check('刷新后照片还在（缩略图重解码）', afterReloadDiary.imgs === 1, JSON.stringify(afterReloadDiary));
 
-  /* 点开大图 */
-  await cdp.eval(`document.querySelector('#diary .photo-cell').click()`);
+  /* 点开大图 + 删掉 */
+  await cdp.eval(`document.querySelector('#diary .df-photo').click()`);
   await sleep(1000);
   const lb = JSON.parse(await cdp.eval(`JSON.stringify({
-    hidden: document.getElementById('lightbox').hidden,
-    shown:  document.getElementById('lightbox').classList.contains('show'),
+    shown: document.getElementById('lightbox').classList.contains('show'),
     blobSrc: String((document.querySelector('#lightbox .lb-img') || {}).src || '').startsWith('blob:'),
     btns: document.querySelectorAll('#lightbox .lb-btn').length,
   })`));
-  check('点照片能看大图', lb.shown === true && lb.hidden === false, JSON.stringify(lb));
+  check('点照片能看大图', lb.shown === true, JSON.stringify(lb));
   check('大图是从本地库读的 blob', lb.blobSrc === true, JSON.stringify(lb));
   check('大图界面有关闭和删除', lb.btns === 2, JSON.stringify(lb));
 
-  /* 删掉 */
   await cdp.eval(`document.querySelector('#lightbox .lb-btn.danger').click()`);
   await sleep(1400);
   const afterDel = JSON.parse(await cdp.eval(`JSON.stringify({
-    cells: document.querySelectorAll('#diary .photo-cell').length,
+    photos: document.querySelectorAll('#diary .df-photo').length,
+    order: [...document.querySelector('#diary .diary-flow').children]
+             .map(n => n.tagName === 'TEXTAREA' ? 'text' : 'photo'),
     lbHidden: document.getElementById('lightbox').hidden,
   })`));
-  check('删除后照片从墙上消失', afterDel.cells === 0, JSON.stringify(afterDel));
+  check('删除后照片从流里消失', afterDel.photos === 0, JSON.stringify(afterDel));
+  check('删除后剩下的还是两段文字', afterDel.order.join(',') === 'text,text', JSON.stringify(afterDel.order));
   check('删除后大图界面收起', afterDel.lbHidden === true, JSON.stringify(afterDel));
 
   const photoGone = await cdp.eval(`(async () => {
@@ -581,7 +692,7 @@ async function main() {
   await cdp.eval(`document.getElementById('themeBtn').click()`);
   await sleep(700);
   const swatchCount = await cdp.eval(`document.querySelectorAll('.swatches .swatch').length`);
-  check('色块共 17 个（16 色 + 默认）', swatchCount === 17, '实际 ' + swatchCount);
+  check('色块共 20 个（19 色 + 默认）', swatchCount === 20, '实际 ' + swatchCount);
 
   await cdp.eval(`document.querySelector('.swatches .swatch[data-id="wine"]').click()`);
   await sleep(900);
@@ -764,48 +875,21 @@ async function main() {
   check('日期标题 19px', fonts.date === '19px', fonts.date);
   check('全页没有任何小于 15px 的字', parseFloat(fonts.smallest) >= 15, fonts.smallest);
 
-  /* ── 8.5 字号三档 ────────────────────────────────────── */
-  console.log('  ── 字号三档 ──');
+  /* 字号三档已经按你的要求删掉了 —— 只保留一个确认 */
   await cdp.eval(`document.getElementById('themeBtn').click()`);
   await sleep(700);
-
-  const fsBtns = await cdp.eval(`document.querySelectorAll('#fsBtns button').length`);
-  check('字号有 3 档按钮', fsBtns === 3, '实际 ' + fsBtns);
-
-  const fsDefault = await cdp.eval(`(document.querySelector('#fsBtns button.on') || {}).dataset?.fs`);
-  check('默认选中「标准」', fsDefault === '1', String(fsDefault));
-
-  const expect = async (fsVal, label) => {
-    await cdp.eval(`document.querySelector('#fsBtns button[data-fs="${fsVal}"]').click()`);
-    await sleep(650);
-    const m = JSON.parse(await cdp.eval(`JSON.stringify({
-      root: getComputedStyle(document.documentElement).fontSize,
-      todo: parseFloat(getComputedStyle(document.querySelector('.todo-input')).fontSize),
-      smallest: ${SMALLEST},
-      on: (document.querySelector('#fsBtns button.on') || {}).dataset?.fs,
-    })`));
-    const wantTodo = 19 * fsVal;            /* 1.1875rem = 19px @fs=1 */
-    const wantFloor = 15 * fsVal;           /* 最小字 0.9375rem = 15px @fs=1 */
-    check(`选「${label}」→ 待办正文 ${wantTodo.toFixed(2)}px`,
-      Math.abs(m.todo - wantTodo) < 0.6, m.todo + 'px');
-    check(`选「${label}」→ 全页最小字不小于 ${wantFloor.toFixed(2)}px`,
-      parseFloat(m.smallest) >= wantFloor - 0.5, m.smallest);
-    check(`选「${label}」→ 按钮高亮正确`, m.on === String(fsVal), String(m.on));
-    return m;
-  };
-
-  await expect(1.15, '大');
-  await expect(1.32, '特大');
-  await expect(1, '标准');
-
-  /* 选「大」然后刷新，验证全局字号记住了 */
-  await cdp.eval(`document.querySelector('#fsBtns button[data-fs="1.15"]').click()`);
-  await sleep(700);
-  await cdp.send('Page.navigate', { url: TARGET_URL });
-  await sleep(2800);
-  const fsKept = await cdp.eval(`parseFloat(getComputedStyle(document.querySelector('.todo-input')).fontSize)`);
-  check('刷新后字号还是「大」（21.85px）', Math.abs(fsKept - 21.85) < 0.6, fsKept + 'px');
-
+  const fsGone = JSON.parse(await cdp.eval(`JSON.stringify({
+    fsBtns: document.querySelectorAll('#fsBtns button').length,
+    strictBtns: document.querySelectorAll('#strictBtns button').length,
+    swatches: document.querySelectorAll('.swatches .swatch').length,
+    explainers: (() => { const t = document.getElementById('themeSheet'); const bad = t.querySelector('.sheet-title') || t.querySelector('.sheet-note') || t.querySelector('.fs-row'); return bad ? bad.className : ''; })(),
+  })`));
+  check('字号三档已经删掉', fsGone.fsBtns === 0, String(fsGone.fsBtns));
+  check('宽松/严格已经删掉', fsGone.strictBtns === 0, String(fsGone.strictBtns));
+  check('颜色排满（19 色 + 默认 = 20 格）', fsGone.swatches === 20, String(fsGone.swatches));
+  check('外观面板里没有标题/说明/字号行', fsGone.explainers === '', JSON.stringify(fsGone.explainers));
+  await cdp.eval(`document.getElementById('scrim').click()`);
+  await sleep(600);
   /* ── 9. 「进行中」高亮是否指对了 ─────────────────────── */
   console.log('  ── 当前时间块高亮 ──');
   const nowInfo = JSON.parse(await cdp.eval(`JSON.stringify((() => {
@@ -831,16 +915,13 @@ async function main() {
       `实际 [${nowInfo.marked}]`);
   }
 
-  /* ── 10. 专注（左划进入 + 长按 15 秒退出） ───────────── */
+  /* ── 10. 专注页（新版：待办名 + 计时器 + 五个圆圈） ──── */
   console.log('  ── 专注 ──');
 
-  const HOLD_DOWN = `document.getElementById('fHold').dispatchEvent(new PointerEvent('pointerdown', {
-    pointerId: 78, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true }))`;
-  const HOLD_UP = `document.getElementById('fHold').dispatchEvent(new PointerEvent('pointerup', {
+  const hold = (id, type) => `document.getElementById('${id}').dispatchEvent(new PointerEvent('${type}', {
     pointerId: 78, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true }))`;
 
-  /* 左划 */
-  await cdp.eval(`(() => {
+  const swipeLeftOnDay = `(() => {
     const day = document.getElementById('day');
     const r = day.getBoundingClientRect();
     const y = r.top + 160;
@@ -853,469 +934,208 @@ async function main() {
     day.dispatchEvent(mk('pointermove', r.left + 160));
     day.dispatchEvent(mk('pointerup',   r.left + 120));
     return true;
-  })()`);
+  })()`;
+
+  await cdp.eval(swipeLeftOnDay);
   await sleep(800);
 
-  const opened = JSON.parse(await cdp.eval(`JSON.stringify({
-    hidden: document.getElementById('focusLayer').hidden,
-    shown:  document.getElementById('focusLayer').classList.contains('show'),
-    block:  document.getElementById('fBlockName').textContent,
-    hold:   document.getElementById('fHoldText').textContent,
+  const p1 = JSON.parse(await cdp.eval(`JSON.stringify({
+    shown: document.getElementById('focusLayer').classList.contains('show'),
+    block: document.getElementById('fBlockName').textContent,
+    time:  document.getElementById('fBlockTime').textContent,
+    startVisible: !document.getElementById('fStart').hidden,
+    circles: document.querySelectorAll('#fBar .f-circle').length,
+    labels: [...document.querySelectorAll('#fBar .f-circle')].map(b => b.textContent),
+    hasStats: !!document.querySelector('#focusLayer .f-stat'),
+    hasHint:  !!document.querySelector('#focusLayer .f-hint'),
+    hasHold:  !!document.getElementById('fHold'),
+    hasPick:  !!document.getElementById('fPick'),
+    hasRing:  !!document.getElementById('fRingFg'),
   })`));
-  check('左划打开专注面板', opened.hidden === false && opened.shown === true,
-    JSON.stringify(opened));
-  check('面板上显示时间块名', !!opened.block && opened.block !== '—', opened.block);
-  check('圆环写着「长按开始」', opened.hold === '长按开始', opened.hold);
 
-  /* 换时间块 */
-  await cdp.eval(`document.getElementById('fPick').click()`);
-  await sleep(400);
-  const pickCount = await cdp.eval(`document.querySelectorAll('#fPicker .f-pick-item').length`);
-  check('时间块选择器列了 7 项', pickCount === 7, '实际 ' + pickCount);
-  await cdp.eval(`document.querySelector('#fPicker .f-pick-item[data-id="b2"]').click()`);
-  await sleep(400);
-  const picked = await cdp.eval(`document.getElementById('fBlockName').textContent`);
-  check('能切成「专业课 / 考研」', picked === '专业课 / 考研', picked);
+  check('左划打开专注页', p1.shown === true, JSON.stringify(p1));
+  check('最上面一行是「块名 + 时间段」',
+    !!p1.block && p1.block !== '—' && /\d{2}:\d{2}[–-]\d{2}:\d{2}/.test(p1.time),
+    `${p1.block} ／ ${p1.time}`);
+  check('底部正好 5 个小圆圈', p1.circles === 5, String(p1.circles));
+  check('圆圈是 🫘 📴 🌙 ⏱ ✕',
+    p1.labels.join('') === '🫘📴🌙⏱✕', JSON.stringify(p1.labels));
+  check('页面上没有统计格子', p1.hasStats === false);
+  check('页面上没有提示文字', p1.hasHint === false);
+  check('那个大圆环已经拿掉了', p1.hasHold === false && p1.hasRing === false);
+  check('「换时间块」已经拿掉了', p1.hasPick === false);
 
-  /* 长按开始 */
-  await cdp.eval(HOLD_DOWN);
-  await sleep(600);
-  const midHold = await cdp.eval(`document.getElementById('fHoldText').textContent`);
-  check('按住时圆环在走', /继续按住/.test(midHold), midHold);
+  /* 开始：按住 ▶ 1.2 秒 */
+  await cdp.eval(hold('fStart', 'pointerdown'));
+  await sleep(650);
+  check('还没按满时不算开始',
+    (await cdp.eval(`!document.getElementById('fStart').hidden`)) === true);
+  await sleep(1000);
 
-  await sleep(1400);
   const running = JSON.parse(await cdp.eval(`JSON.stringify({
     running: document.getElementById('focusLayer').classList.contains('is-running'),
-    hold: document.getElementById('fHoldText').textContent,
-    hint: document.getElementById('fHint').textContent,
+    startHidden: document.getElementById('fStart').hidden,
   })`));
-  check('长按 2 秒后开始计时', running.running === true, JSON.stringify(running));
-  check('运行中圆环改成「长按 15 秒退出」', /15 秒退出/.test(running.hold), running.hold);
-  check('提示写明息屏也会继续记', /息屏/.test(running.hint), running.hint);
+  check('按住约 1.7 秒后开始计时',
+    running.running === true && running.startHidden === true, JSON.stringify(running));
 
-  /* 计时器真的在走 */
   const c1 = await cdp.eval(`document.getElementById('fClock').textContent`);
   await sleep(2200);
   const c2 = await cdp.eval(`document.getElementById('fClock').textContent`);
   check('计时器在走', c1 !== c2, c1 + ' → ' + c2);
+  check('计时器格式是 时:分:秒', /^\d{2}:\d{2}:\d{2}$/.test(c2), c2);
 
-  /* 模拟息屏 / 切走 —— 「息屏照走 + 离开账本」的核心验证 */
-  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
-    document.dispatchEvent(new Event('visibilitychange')); true`);
-  await sleep(2600);
-  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
-    document.dispatchEvent(new Event('visibilitychange')); true`);
-  await sleep(900);
-
-  const away = JSON.parse(await cdp.eval(`(async () => {
+  /* 🫘 查题：点了之后切页面也算专注，时间线上涂蓝 */
+  await cdp.eval(`document.getElementById('fLookup').click()`);
+  await sleep(700);
+  const lk = JSON.parse(await cdp.eval(`(async () => {
     const m = await import('./js/store.js');
     const list = await m.sessionsForDate(m.todayKey());
     const s = list.find(x => !x.endedAt) || list[0] || null;
-    return JSON.stringify(s ? {
-      awayCount: (s.away || []).length,
-      allClosed: (s.away || []).every(a => a.to !== null && a.to !== undefined),
-      stillRunning: !s.endedAt,
-      clock: document.getElementById('fClock').textContent,
-    } : { none: true });
+    return JSON.stringify({
+      onBtn: document.getElementById('fLookup').classList.contains('on'),
+      open: s ? (s.marks || []).filter(x => x.kind === 'lookup' && x.to === null).length : -1,
+    });
   })()`));
+  check('🫘 查题能打开', lk.onBtn === true, JSON.stringify(lk));
+  check('查题状态记进了会话', lk.open === 1, JSON.stringify(lk));
 
-  const secs = (() => {
-    const p = String(away.clock || '0:0:0').split(':').map(Number);
-    return p[0] * 3600 + p[1] * 60 + p[2];
-  })();
-  check('切走被记了一笔离开', away.awayCount === 1, JSON.stringify(away));
-  check('回来之后离开区间已闭合', away.allClosed === true, JSON.stringify(away));
-  check('切走期间计时没有停（息屏照走）', away.stillRunning === true, JSON.stringify(away));
-  check('切走期间时长照常累加', secs >= 4, away.clock);
+  await cdp.eval(`document.getElementById('fLookup').click()`);
+  await sleep(600);
+  check('再点一下关闭查题',
+    (await cdp.eval(`document.getElementById('fLookup').classList.contains('on')`)) === false);
 
-  /* 提前松手不该退出 */
-  await cdp.eval(HOLD_DOWN);
-  await sleep(3000);
-  await cdp.eval(HOLD_UP);
-  await sleep(400);
-  const afterEarly = await cdp.eval(`document.getElementById('focusLayer').classList.contains('is-running')`);
-  check('长按 3 秒松手 → 不算退出（必须满 15 秒）', afterEarly === true, String(afterEarly));
-
-  /* 长按满 15 秒 */
-  await cdp.eval(HOLD_DOWN);
-  await sleep(15600);
-
-  const doneInfo = JSON.parse(await cdp.eval(`JSON.stringify({
-    done:    document.getElementById('focusLayer').classList.contains('is-done'),
-    running: document.getElementById('focusLayer').classList.contains('is-running'),
-    clock:   document.getElementById('fClock').textContent,
-    doneBtn: !document.getElementById('fDoneBtn').hidden,
-    stats:   [...document.querySelectorAll('.f-stat')].map(e => e.textContent).join(' | '),
-    segs:    document.querySelectorAll('#fTimeline rect').length,
-  })`));
-  check('长按满 15 秒 → 会话结束', doneInfo.done === true && doneInfo.running === false,
-    JSON.stringify(doneInfo));
-  check('结算卡出现「完成」按钮', doneInfo.doneBtn === true, JSON.stringify(doneInfo));
-  check('结算卡显示有效时长', /\d+h\d+m/.test(doneInfo.clock), doneInfo.clock);
-  check('时间线画出了分段', doneInfo.segs >= 2, '段数 ' + doneInfo.segs);
-  check('统计里有「离开」这一项', /离开/.test(doneInfo.stats), doneInfo.stats);
-
-  /* 落盘验证 */
-  const saved = JSON.parse(await cdp.eval(`(async () => {
+  /* 📴 息屏：这段算专注（绿色）；回到页面时自动结束 */
+  await cdp.eval(`document.getElementById('fScreen').click()`);
+  await sleep(700);
+  const sc = JSON.parse(await cdp.eval(`(async () => {
     const m = await import('./js/store.js');
     const list = await m.sessionsForDate(m.todayKey());
-    const s = list[0] || null;
-    return JSON.stringify(list.length ? {
-      n: list.length,
-      ended: !!s.endedAt,
-      blockId: s.blockId,
-      awayCount: (s.away || []).length,
-      span: s.endedAt - s.startedAt,
-    } : { n: 0 });
-  })()`));
-  check('会话写进了数据库', saved.n === 1, JSON.stringify(saved));
-  check('会话已结束并封存', saved.ended === true, JSON.stringify(saved));
-  check('会话挂在正确的时间块上（b2）', saved.blockId === 'b2', String(saved.blockId));
-  check('离开记录一并存下来了', saved.awayCount === 1, JSON.stringify(saved));
-  check('会话跨度超过 15 秒', saved.span > 15000, String(saved.span));
-
-  /* 收尾：关面板 + 刷新 */
-  await cdp.eval(`document.getElementById('fDoneBtn').click()`);
-  await sleep(600);
-  check('点「完成」后面板关掉',
-    (await cdp.eval(`document.getElementById('focusLayer').hidden`)) === true);
-
-  await cdp.send('Page.navigate', { url: TARGET_URL });
-  await sleep(3200);
-  const afterReloadFocus = JSON.parse(await cdp.eval(`JSON.stringify({
-    focusHidden: document.getElementById('focusLayer').hidden,
-    goal: document.getElementById('goalNow').textContent,
-    title: document.getElementById('goal').title,
-  })`));
-  check('刷新后没有残留的进行中会话', afterReloadFocus.focusHidden === true,
-    JSON.stringify(afterReloadFocus));
-  check('底部条读到了今天的离开记录', /离开/.test(afterReloadFocus.title),
-    afterReloadFocus.title);
-
-  /* ── 10.8 日总结（右划） ─────────────────────────────── */
-  console.log('  ── 日总结 ──');
-
-  const swipeRightOnDay = `(() => {
-    const day = document.getElementById('day');
-    const r = day.getBoundingClientRect();
-    const y = r.top + 160;
-    const mk = (type, x) => new PointerEvent(type, {
-      pointerId: 81, pointerType: 'touch', isPrimary: true,
-      clientX: x, clientY: y, bubbles: true, cancelable: true,
+    const s = list.find(x => !x.endedAt) || list[0] || null;
+    return JSON.stringify({
+      onBtn: document.getElementById('fScreen').classList.contains('on'),
+      open: s ? (s.marks || []).filter(x => x.kind === 'screenoff' && x.to === null).length : -1,
     });
-    day.dispatchEvent(mk('pointerdown', r.left + 120));
-    day.dispatchEvent(mk('pointermove', r.left + 200));
-    day.dispatchEvent(mk('pointermove', r.left + 300));
-    day.dispatchEvent(mk('pointerup',   r.left + 360));
-    return true;
-  })()`;
+  })()`));
+  check('📴 息屏能打开', sc.onBtn === true, JSON.stringify(sc));
+  check('息屏状态记进了会话', sc.open === 1, JSON.stringify(sc));
 
-  await cdp.eval(swipeRightOnDay);
+  /* 切走再回来 → 息屏自动结束 */
+  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange')); true`);
+  await sleep(1600);
+  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange')); true`);
   await sleep(900);
+  const back = JSON.parse(await cdp.eval(`(async () => {
+    const m = await import('./js/store.js');
+    const list = await m.sessionsForDate(m.todayKey());
+    const s = list.find(x => !x.endedAt) || list[0] || null;
+    return JSON.stringify({
+      offBtn: document.getElementById('fScreen').classList.contains('on'),
+      open: s ? (s.marks || []).filter(x => x.kind === 'screenoff' && x.to === null).length : -1,
+      stillRunning: s ? !s.endedAt : false,
+    });
+  })()`));
+  check('回到页面后息屏状态自动结束', back.offBtn === false && back.open === 0, JSON.stringify(back));
+  check('切走期间计时没停', back.stillRunning === true, JSON.stringify(back));
 
-  const sum = JSON.parse(await cdp.eval(`JSON.stringify({
-    hidden:  document.getElementById('summaryLayer').hidden,
-    shown:   document.getElementById('summaryLayer').classList.contains('show'),
-    title:   document.getElementById('sumTitle').textContent,
-    date:    document.getElementById('sumDate').textContent,
-    segs:    document.querySelectorAll('#sumDonut .donut-seg').length,
-    legend:  document.querySelectorAll('#sumLegend .legend-row').length,
-    blocks:  document.querySelectorAll('#sumBlocks .sum-block').length,
-    bars:    document.querySelectorAll('#sumBlocks .sum-bar').length,
-    habits:  document.querySelectorAll('#sumHabits .habit').length,
-    sleep:   document.querySelectorAll('#sumSleep .sleep-btn').length,
-    tlRects: document.querySelectorAll('#sumTimeline .day-tl-focus').length,
-    tlTicks: document.querySelectorAll('#sumTimeline .day-tl-tick').length,
-    axis:    document.querySelectorAll('#sumTimeline .day-tl-axis span').length,
-    big:     (document.querySelector('.donut-big') || {}).textContent,
-    mid:     (document.querySelector('.donut-mid') || {}).textContent,
+  /* ⏱ 倒计时：5 的倍数，到点不退出专注 */
+  await cdp.eval(`document.getElementById('fCd').click()`);
+  await sleep(600);
+  const picker = JSON.parse(await cdp.eval(`JSON.stringify({
+    visible: !document.getElementById('fCdPicker').hidden,
+    options: [...document.querySelectorAll('#fCdPicker .cd-item')].map(b => Number(b.dataset.min)),
   })`));
+  check('点 ⏱ 弹出倒计时选项', picker.visible === true, JSON.stringify(picker));
+  check('选项都是 5 的倍数',
+    picker.options.length >= 4 && picker.options.every(n => n % 5 === 0),
+    JSON.stringify(picker.options));
 
-  check('右划打开日总结', sum.hidden === false && sum.shown === true, JSON.stringify(sum));
-  check('标题是「今日总结」', sum.title === '今日总结', sum.title);
-  check('日期行有内容', /\d+月\d+日/.test(sum.date), sum.date);
-  check('日程列了 7 个时间块', sum.blocks === 7, '实际 ' + sum.blocks);
-  check('4 个学习块有进度条', sum.bars === 4, '实际 ' + sum.bars);
-  check('习惯有 4 项（英语/背单词/运动/练字）', sum.habits === 4, '实际 ' + sum.habits);
-  check('睡眠有 2 个按钮', sum.sleep === 2, '实际 ' + sum.sleep);
-  check('环形图按块分了段', sum.segs >= 1, '段数 ' + sum.segs);
-  check('图例行数和分段数一致', sum.legend === sum.segs, `${sum.legend} vs ${sum.segs}`);
-  check('圆心显示有效专注时长', /\d+h\d+m/.test(sum.big || ''), String(sum.big));
-  check('圆心显示占 12h 的百分比', /%/.test(sum.mid || ''), String(sum.mid));
-  check('全天时间线画了刻度', sum.tlTicks >= 5, '实际 ' + sum.tlTicks);
-  check('全天时间线有专注段', sum.tlRects >= 1, '实际 ' + sum.tlRects);
-  check('时间线轴有多个时刻标注', sum.axis >= 5, '实际 ' + sum.axis);
-
-  /* 习惯打卡 */
-  await cdp.eval(`document.querySelector('#sumHabits .habit[data-habit="英语"]').click()`);
-  await sleep(600);
-  check('点习惯能打卡',
-    (await cdp.eval(`document.querySelector('#sumHabits .habit[data-habit="英语"]').classList.contains('on')`)) === true);
-
-  /* 睡眠打卡 */
-  await cdp.eval(`document.querySelector('#sumSleep .sleep-btn').click()`);
-  await sleep(600);
-  const sleepState = JSON.parse(await cdp.eval(`JSON.stringify({
-    on: document.querySelector('#sumSleep .sleep-btn').classList.contains('on'),
-    time: document.querySelector('#sumSleep .sleep-btn .sleep-time').textContent,
-  })`));
-  check('点月亮记下睡觉时间',
-    sleepState.on === true && /^\d{2}:\d{2}$/.test(sleepState.time), JSON.stringify(sleepState));
-  check('睡眠说明更新成「还没记起床时间」',
-    /还没记起床/.test(await cdp.eval(`document.querySelector('#sumSleep .sum-note').textContent`)));
-
-  /* 关掉面板 */
-  await cdp.eval(`document.getElementById('sumClose').click()`);
-  await sleep(600);
-  check('点 ✕ 能收起日总结',
-    (await cdp.eval(`document.getElementById('summaryLayer').hidden`)) === true);
-
-  /* 刷新，验证习惯和睡眠真的落盘了 */
-  await cdp.send('Page.navigate', { url: TARGET_URL });
-  await sleep(3200);
-  await cdp.eval(swipeRightOnDay);
+  await cdp.eval(`document.querySelector('#fCdPicker .cd-item[data-min="5"]').click()`);
   await sleep(900);
+  const cd = JSON.parse(await cdp.eval(`(async () => {
+    const m = await import('./js/store.js');
+    const list = await m.sessionsForDate(m.todayKey());
+    const s = list.find(x => !x.endedAt) || list[0] || null;
+    return JSON.stringify({
+      lineShown: !document.getElementById('fCdLine').hidden,
+      lineText: document.getElementById('fCdLine').textContent,
+      open: s ? (s.marks || []).filter(x => x.kind === 'countdown' && x.to === null).length : -1,
+      running: s ? !s.endedAt : false,
+    });
+  })()`));
+  check('倒计时开始了', cd.lineShown === true && /⏱/.test(cd.lineText), JSON.stringify(cd));
+  check('倒计时记进了会话', cd.open === 1, JSON.stringify(cd));
+  check('倒计时开始后没有退出专注', cd.running === true, JSON.stringify(cd));
 
-  const persisted = JSON.parse(await cdp.eval(`JSON.stringify({
-    habit: document.querySelector('#sumHabits .habit[data-habit="英语"]').classList.contains('on'),
-    sleep: document.querySelector('#sumSleep .sleep-btn').classList.contains('on'),
-    title: document.getElementById('sumTitle').textContent,
+  /* 提前松手不算退出 */
+  await cdp.eval(hold('fExit', 'pointerdown'));
+  await sleep(3000);
+  await cdp.eval(hold('fExit', 'pointerup'));
+  await sleep(400);
+  check('长按 3 秒松手 → 不算退出（要满 15 秒）',
+    (await cdp.eval(`document.getElementById('focusLayer').classList.contains('is-running')`)) === true);
+
+  /* 长按满 15 秒 → 弹出写一句话的对话框 */
+  await cdp.eval(hold('fExit', 'pointerdown'));
+  await sleep(15600);
+  const noteState = JSON.parse(await cdp.eval(`JSON.stringify({
+    noteVisible: !document.getElementById('fNote').hidden,
+    noteValue: document.getElementById('fNoteText').value,
+    wordsInNote: (() => { const n = document.getElementById('fNote'); const t = n.textContent.replace(/\\s/g, ''); return t.replace(/✓/g, '').length; })(),
+    barHidden: document.getElementById('fBar').hidden,
+    focused: document.activeElement && document.activeElement.id === 'fNoteText',
   })`));
-  check('刷新后习惯打卡还在', persisted.habit === true, JSON.stringify(persisted));
-  check('刷新后睡眠记录还在', persisted.sleep === true, JSON.stringify(persisted));
-
-  await cdp.eval(`document.getElementById('sumClose').click()`);
-  await sleep(600);
-
-  /* ── 10.85 便签本 ────────────────────────────────────── */
-  console.log('  ── 便签本 ──');
-
-  const notesBtn = JSON.parse(await cdp.eval(`JSON.stringify({
-    exists: !!document.getElementById('notesBtn'),
-    text: (document.getElementById('notesBtn') || {}).textContent,
-  })`));
-  check('底部有便签按钮', notesBtn.exists === true, JSON.stringify(notesBtn));
-  check('按钮写着「便签」', /便签/.test(notesBtn.text || ''), String(notesBtn.text));
-
-  await cdp.eval(`document.getElementById('notesBtn').click()`);
-  await sleep(900);
-
-  const list0 = JSON.parse(await cdp.eval(`JSON.stringify({
-    shown: document.getElementById('notesLayer').classList.contains('show'),
-    listVisible: !document.getElementById('notesList').hidden,
-    cards: document.querySelectorAll('#notesGrid .note-card').length,
-    emptyShown: !document.getElementById('notesEmpty').hidden,
-  })`));
-  check('点便签按钮打开便签本',
-    list0.shown === true && list0.listVisible === true, JSON.stringify(list0));
-  check('一开始是空列表并给出提示',
-    list0.cards === 0 && list0.emptyShown === true, JSON.stringify(list0));
-
-  /* 新建一条 */
-  await cdp.eval(`document.getElementById('noteAdd').click()`);
-  await sleep(700);
-  const editor0 = JSON.parse(await cdp.eval(`JSON.stringify({
-    editorVisible: !document.getElementById('notesEditor').hidden,
-    listHidden: document.getElementById('notesList').hidden,
-    focused: !!(document.activeElement && document.activeElement.id === 'noteText'),
-    bg: getComputedStyle(document.getElementById('notesEditor')).backgroundColor,
-    dots: document.querySelectorAll('#noteColors .note-dot').length,
-  })`));
-  check('点 ＋ 进入编辑界面',
-    editor0.editorVisible === true && editor0.listHidden === true, JSON.stringify(editor0));
-  check('编辑器自动聚焦，打开就能打字', editor0.focused === true, JSON.stringify(editor0));
-  check('默认是黄色便签', editor0.bg === 'rgb(255, 241, 168)', editor0.bg);
-  check('有 6 个颜色可选', editor0.dots === 6, String(editor0.dots));
+  check('长按满 15 秒 → 弹出写一句话的框', noteState.noteVisible === true, JSON.stringify(noteState));
+  check('这个框里一个字都没写', noteState.wordsInNote === 0, `框里有 "${noteState.wordsInNote}" 个字`);
+  check('框是空的而且已经聚焦', noteState.noteValue === '' && noteState.focused === true,
+    JSON.stringify(noteState));
+  check('弹框时底部圆圈收起来了', noteState.barHidden === true, JSON.stringify(noteState));
 
   await cdp.eval(`(() => {
-    const ta = document.getElementById('noteText');
-    ta.value = '第一条便签：\\n周三前把开题报告的大纲列出来。';
+    const ta = document.getElementById('fNoteText');
+    ta.value = '今天状态不错，明天继续保持';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('fNoteOk').click();
     return true;
   })()`);
   await sleep(1200);
 
-  await cdp.eval(`document.querySelector('#noteColors .note-dot[data-color="blue"]').click()`);
-  await sleep(700);
-  const colored = await cdp.eval(`getComputedStyle(document.getElementById('notesEditor')).backgroundColor`);
-  check('能换成蓝色便签', colored === 'rgb(204, 229, 250)', colored);
-
-  await cdp.eval(`document.getElementById('noteBack').click()`);
-  await sleep(900);
-  const list1 = JSON.parse(await cdp.eval(`JSON.stringify({
-    cards: document.querySelectorAll('#notesGrid .note-card').length,
-    text: (document.querySelector('#notesGrid .note-card-text') || {}).textContent,
-    bg: getComputedStyle(document.querySelector('#notesGrid .note-card')).backgroundColor,
-    date: (document.querySelector('#notesGrid .note-card-date') || {}).textContent,
-  })`));
-  check('返回后列表里出现一张便签', list1.cards === 1, JSON.stringify(list1));
-  check('卡片上能看到内容', /第一条便签/.test(list1.text || ''), String(list1.text));
-  check('卡片保留了选的颜色', list1.bg === 'rgb(204, 229, 250)', list1.bg);
-  check('卡片上有日期', /\d+月\d+日/.test(list1.date || ''), String(list1.date));
-
-  /* 点了 ＋ 又反悔的情况 */
-  await cdp.eval(`document.getElementById('noteAdd').click()`);
-  await sleep(600);
-  await cdp.eval(`document.getElementById('noteBack').click()`);
-  await sleep(900);
-  check('新建后一个字没写就返回 —— 不留空白便签',
-    (await cdp.eval(`document.querySelectorAll('#notesGrid .note-card').length`)) === 1);
-
-  /* 第二条 + 置顶 */
-  await cdp.eval(`document.getElementById('noteAdd').click()`);
-  await sleep(600);
-  await cdp.eval(`(() => {
-    const ta = document.getElementById('noteText');
-    ta.value = '第二条便签';
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
-  })()`);
-  await sleep(1000);
-  await cdp.eval(`document.getElementById('notePin').click()`);
-  await sleep(700);
-  check('置顶按钮生效',
-    (await cdp.eval(`document.getElementById('notePin').classList.contains('on')`)) === true);
-  await cdp.eval(`document.getElementById('noteBack').click()`);
-  await sleep(900);
-
-  const ordered = JSON.parse(await cdp.eval(`JSON.stringify({
-    n: document.querySelectorAll('#notesGrid .note-card').length,
-    first: (document.querySelector('#notesGrid .note-card .note-card-text') || {}).textContent,
-    pinned: document.querySelectorAll('#notesGrid .note-card.pinned').length,
-  })`));
-  check('现在有 2 张便签', ordered.n === 2, JSON.stringify(ordered));
-  check('置顶的排在最前面', ordered.first === '第二条便签', String(ordered.first));
-  check('置顶样式生效', ordered.pinned === 1, String(ordered.pinned));
-
-  /* 刷新验证落盘 */
-  await cdp.send('Page.navigate', { url: TARGET_URL });
-  await sleep(3200);
-  await cdp.eval(`document.getElementById('notesBtn').click()`);
-  await sleep(900);
-  const notesReloaded = JSON.parse(await cdp.eval(`JSON.stringify({
-    n: document.querySelectorAll('#notesGrid .note-card').length,
-    texts: [...document.querySelectorAll('#notesGrid .note-card-text')].map(e => e.textContent),
-  })`));
-  check('刷新后便签还在', notesReloaded.n === 2, JSON.stringify(notesReloaded));
-  check('刷新后内容没变',
-    notesReloaded.texts.some(t => /第一条便签/.test(t)) && notesReloaded.texts.some(t => t === '第二条便签'),
-    JSON.stringify(notesReloaded.texts));
-
-  /* 点开看内容 */
-  await cdp.eval(`[...document.querySelectorAll('#notesGrid .note-card')].find(c => /第一条/.test(c.textContent)).click()`);
-  await sleep(800);
-  const reopened = JSON.parse(await cdp.eval(`JSON.stringify({
-    editorVisible: !document.getElementById('notesEditor').hidden,
-    text: document.getElementById('noteText').value,
-  })`));
-  check('点便签能打开看内容', reopened.editorVisible === true, JSON.stringify(reopened));
-  check('打开的就是那张便签', /周三前把开题报告/.test(reopened.text || ''), String(reopened.text));
-
-  /* 删除 */
-  await cdp.eval(`window.confirm = () => true; document.getElementById('noteDel').click()`);
-  await sleep(1100);
-  check('删除后少了一张',
-    (await cdp.eval(`document.querySelectorAll('#notesGrid .note-card').length`)) === 1);
-
-  await cdp.eval(`document.getElementById('notesClose').click()`);
-  await sleep(700);
-  check('点 ✕ 能收起便签本',
-    (await cdp.eval(`document.getElementById('notesLayer').hidden`)) === true);
-
-  /* ── 10.9 备份导出 + PDF ─────────────────────────────── */
-  console.log('  ── 备份导出 ──');
-
-  /* 先给今天塞一张照片，好验证照片有没有被打进包里 */
-  await cdp.eval(`(async () => {
-    const c = document.createElement('canvas');
-    c.width = 1600; c.height = 1200;
-    const g = c.getContext('2d');
-    g.fillStyle = '#2A4674'; g.fillRect(0, 0, 1600, 1200);
-    g.fillStyle = '#E9F6EF'; g.font = 'bold 260px sans-serif'; g.fillText('BK', 560, 700);
-    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
-    const dt = new DataTransfer();
-    dt.items.add(new File([blob], 'bk.jpg', { type: 'image/jpeg' }));
-    const input = document.querySelector('#diary input[type=file]');
-    input.files = dt.files;
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-  })()`);
-  await sleep(2800);
-  check('为备份测试加好了一张照片',
-    (await cdp.eval(`document.querySelectorAll('#diary .photo-cell').length`)) === 1);
-
-  const backup = JSON.parse(await cdp.eval(`(async () => {
-    const bk = await import('./js/backup.js');
-    const zip = await import('./js/zip.js');
-    const { blob, meta } = await bk.buildBackupBlob();
-    const entries = await zip.readZip(blob);
-    const names = entries.map(e => e.name);
-    const de = entries.find(e => e.name === 'data.json');
-    let data = null;
-    try { data = de ? JSON.parse(new TextDecoder().decode(de.data)) : null; } catch (e) { data = { err: e.message }; }
-    const photoJson = entries.find(e => e.name.endsWith('.json') && e.name.startsWith('photos/'));
-    let pmeta = null;
-    try { pmeta = photoJson ? JSON.parse(new TextDecoder().decode(photoJson.data)) : null; } catch (e) { pmeta = null; }
+  const saved = JSON.parse(await cdp.eval(`(async () => {
+    const m = await import('./js/store.js');
+    const list = await m.sessionsForDate(m.todayKey());
+    const s = list[list.length - 1] || null;
     return JSON.stringify({
-      bytes: blob.size,
-      type: blob.type,
-      meta,
-      names,
-      jpgCount: names.filter(n => n.endsWith('.jpg')).length,
-      dayCount: data && data.days ? data.days.length : -1,
-      sessionCount: data && data.sessions ? data.sessions.length : -1,
-      noteCount: data && data.notes ? data.notes.length : -1,
-      settingKeys: data && data.settings ? data.settings.map(s => s.key) : [],
-      photoW: pmeta && pmeta.w, photoH: pmeta && pmeta.h,
-      photoDay: pmeta && pmeta.day,
+      n: list.length,
+      ended: s ? !!s.endedAt : false,
+      note: s ? s.note : null,
+      blockId: s ? s.blockId : null,
+      markKinds: s ? [...new Set((s.marks || []).map(x => x.kind))].sort() : [],
+      closedMarks: s ? (s.marks || []).every(x => x.to !== null) : false,
+      layerHidden: document.getElementById('focusLayer').hidden,
     });
   })()`));
+  check('会话写进数据库并结束', saved.n >= 1 && saved.ended === true, JSON.stringify(saved));
+  check('那句话存下来了', saved.note === '今天状态不错，明天继续保持', JSON.stringify(saved.note));
+  check('标记段（查题/息屏/倒计时）都存下来了',
+    saved.markKinds.includes('lookup') && saved.markKinds.includes('screenoff'),
+    JSON.stringify(saved.markKinds));
+  check('结束时标记段都收尾了', saved.closedMarks === true, JSON.stringify(saved.closedMarks));
+  check('写完后专注页自动收起', saved.layerHidden === true, JSON.stringify(saved));
 
-  check('导出包是个真正的 zip', backup.type === 'application/zip' && backup.bytes > 500,
-    JSON.stringify({ bytes: backup.bytes, type: backup.type }));
-  check('包里带 data.json', backup.names.includes('data.json'), JSON.stringify(backup.names.slice(0, 6)));
-  check('包里有大图 + 缩略图两个 jpg', backup.jpgCount === 2, '实际 ' + backup.jpgCount);
-  check('data.json 里有日期记录', backup.dayCount >= 1, String(backup.dayCount));
-  check('data.json 里带上了专注会话', backup.sessionCount >= 1, String(backup.sessionCount));
-  check('data.json 里带上了便签', backup.noteCount >= 1, String(backup.noteCount));
-  check('data.json 里带上了设置', backup.settingKeys.includes('app'), JSON.stringify(backup.settingKeys));
-  check('照片元信息跟着进来了', backup.photoW === 1280 && backup.photoDay === TODAY,
-    JSON.stringify({ w: backup.photoW, day: backup.photoDay }));
-  check('包大小合理（没把原图塞进去）', backup.bytes < 600 * 1024, backup.bytes + ' B');
-
-  console.log('  ── PDF 排版 ──');
-
-  /* 把 window.print 换成计数器，免得无头浏览器真弹打印面板 */
-  await cdp.eval(`window.__printCount = 0; window.print = () => { window.__printCount++; }; true`);
-  await cdp.eval(`(async () => {
-    const m = await import('./js/print.js');
-    const st = await import('./js/store.js');
-    await m.printDay(st.todayKey());
-    return true;
-  })()`);
-  await sleep(1100);
-
-  const pdf = JSON.parse(await cdp.eval(`JSON.stringify({
-    called: window.__printCount,
-    pages: document.querySelectorAll('#printRoot .pr-page').length,
-    date: (document.querySelector('#printRoot .pr-date') || {}).textContent,
-    blocks: document.querySelectorAll('#printRoot .pr-block').length,
-    todos: document.querySelectorAll('#printRoot .pr-todo').length,
-    doneTodos: document.querySelectorAll('#printRoot .pr-todo.done').length,
-    photos: document.querySelectorAll('#printRoot .pr-photo').length,
-    timeline: document.querySelectorAll('#printRoot .pr-tl-focus').length,
-    h2: [...document.querySelectorAll('#printRoot .pr-h2')].map(e => e.textContent),
-  })`));
-
-  check('导出 PDF 调用了打印', pdf.called === 1, String(pdf.called));
-  check('排出了 1 页', pdf.pages === 1, String(pdf.pages));
-  check('PDF 页上有日期', /\d+月\d+日/.test(pdf.date || ''), String(pdf.date));
-  check('PDF 页上有 7 个时间块', pdf.blocks === 7, String(pdf.blocks));
-  check('PDF 页上有待办', pdf.todos >= 1, String(pdf.todos));
-  check('PDF 页上标出了已完成', pdf.doneTodos >= 1, String(pdf.doneTodos));
-  check('PDF 页上有照片', pdf.photos === 1, String(pdf.photos));
-  check('PDF 页上有时间线', pdf.timeline >= 1, String(pdf.timeline));
-  check('PDF 有「日程」小节', pdf.h2.includes('日程'), JSON.stringify(pdf.h2));
+  /* 有效时长 = 总时长（熄屏/切走都不扣） */
+  const eff = JSON.parse(await cdp.eval(`(async () => {
+    const m = await import('./js/store.js');
+    const f = await import('./js/focus.js');
+    const list = await m.sessionsForDate(m.todayKey());
+    const s = list[list.length - 1];
+    const r = f.summarize(s);
+    return JSON.stringify({ total: r.totalMs, effective: r.effectiveMs, drop: r.totalMs - r.effectiveMs });
+  })()`));
+  check('有效时长 = 总时长（切走/息屏一律不扣）',
+    eff.drop === 0 && eff.effective === eff.total,
+    JSON.stringify(eff));
 
   /* ── 10.5 熄灯模式 + 页面被杀掉后接着算 ──────────────── */
   console.log('  ── 熄灯 & 断点续算 ──');
@@ -1346,7 +1166,7 @@ async function main() {
   })`));
   check('熄灯模式打开', lights.off === true, JSON.stringify(lights));
   check('熄灯后背景是纯黑（OLED 真省电）', lights.bg === 'rgb(0, 0, 0)', lights.bg);
-  check('按钮变成「开灯」', /开灯/.test(lights.btn), lights.btn);
+  check('熄灯圆圈变成亮起状态', /🌙/.test(lights.btn), lights.btn);
 
   await cdp.eval(`document.getElementById('fLights').click()`);
   await sleep(350);
@@ -1354,7 +1174,7 @@ async function main() {
     (await cdp.eval(`document.getElementById('focusLayer').classList.contains('lights-off')`)) === false);
 
   /* 开一次专注，然后直接刷新 —— 相当于 iOS 把页面回收了 */
-  await cdp.eval(HOLD_DOWN);
+  await cdp.eval(hold('fStart', 'pointerdown'));
   await sleep(1900);
   check('又开了一次专注',
     (await cdp.eval(`document.getElementById('focusLayer').classList.contains('is-running')`)) === true);

@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    print.js — 导出 PDF
 
    做法：把要打印的内容拼成一个隐藏的 DOM（#printRoot），
@@ -157,8 +157,6 @@ async function buildDayPage(date) {
       page.appendChild(grid);
     }
   }
-
-  page.appendChild(el('footer', { class: 'pr-foot', text: '待办本子' }));
   return page;
 }
 

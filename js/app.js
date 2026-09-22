@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    app.js — 主程序：开局、切天、自动翻页、面板开关
    ═══════════════════════════════════════════════════════════ */
 
@@ -10,6 +10,7 @@ import {
 import { applyTheme, themeForDay, renderSwatches } from './theme.js';
 import { renderDay, renderHead, renderGoal, scrollToNow } from './render.js';
 import { renderDiary } from './diary.js';
+import { renderHabits } from './habits.js';
 import {
   renderWeekList, appendWeeks, hasMoreWeeks,
   renderHabitTable, buildWeekHead,
@@ -25,6 +26,8 @@ import {
 import { exportAll, importAll } from './backup.js';
 import { printDay, printMonth } from './print.js';
 import { initNotes, openNotes, isNotesOpen } from './notes.js';
+import { seedCourses } from './schedule.js';
+import { checkWake } from './sleep.js';
 
 /* ── 全局状态 ──────────────────────────────────────────── */
 
@@ -78,12 +81,15 @@ function paintTopbar(date) {
 /** 整页：时间块 + 日记本。分开画是为了避开 render.js ←→ diary.js 的循环引用 */
 function drawDay() {
   renderDay(currentDay, ctx, currentFocus);
+  renderHabits(currentDay, ctx);
   renderDiary(currentDay, ctx);
 }
 
 async function paint(date) {
   currentDate = date;
   currentDay = await getDay(date);
+  /* 这一天的课，提前填成待办（只填一次，你删了就不会再塞回来） */
+  if (await seedCourses(currentDay)) await putDay(currentDay);
   applyTheme(themeForDay(currentDay, settings));
   paintTopbar(date);
   await refreshFocus();
@@ -262,41 +268,6 @@ function wire() {
     };
     renderSwatches($('swatches'), currentDay.theme, pick);
     openSheet($('themeSheet'));
-  });
-  $('themeClose').addEventListener('click', closeSheet);
-
-  /* 字号三档 —— 全局生效，立刻重排 */
-  const markFs = (fs) => {
-    document.querySelectorAll('#fsBtns button').forEach((b) => {
-      b.classList.toggle('on', Math.abs(parseFloat(b.dataset.fs) - fs) < 0.01);
-    });
-  };
-  markFs(settings.fs || 1);
-
-  $('fsBtns').addEventListener('click', async (e) => {
-    const btn = e.target.closest('button[data-fs]');
-    if (!btn) return;
-    const fs = parseFloat(btn.dataset.fs);
-    applyFontScale(fs);
-    markFs(fs);
-    await saveSettings({ fs });
-  });
-
-  /* 专注模式：宽松 / 严格 */
-  const markStrict = (v) => {
-    document.querySelectorAll('#strictBtns button').forEach((b) => {
-      b.classList.toggle('on', (b.dataset.strict === '1') === !!v);
-    });
-  };
-  markStrict(!!settings.strict);
-
-  $('strictBtns').addEventListener('click', async (e) => {
-    const btn = e.target.closest('button[data-strict]');
-    if (!btn) return;
-    const v = btn.dataset.strict === '1';
-    markStrict(v);
-    await saveSettings({ strict: v });
-    toast(v ? '严格模式：专注时一离开就作废' : '宽松模式：息屏照走，只记离开账本', 2600);
   });
 
   /* 小本子（周历 / 习惯 / 备份） */
@@ -532,7 +503,12 @@ async function boot() {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
-  /* ③ 上次的专注还没结束？接着算。页面被 iOS 杀掉也不会丢。 */
+  /* ③ 点了「我睡了」之后又回来 —— 自动记「我醒了」 */
+  try {
+    if (await checkWake()) toast('早安', 2400);
+  } catch { /* 记不上不影响用 */ }
+
+  /* ④ 上次的专注还没结束？接着算。页面被 iOS 杀掉也不会丢。 */
   try {
     await resumeIfAny();
   } catch { /* 接不上就算了，不影响用 */ }

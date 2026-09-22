@@ -1,24 +1,25 @@
 /* ═══════════════════════════════════════════════════════════
-   diary.js — 时间块下面的日记本
+   diary.js — 日记：文字和照片**一条流**
 
-   文字：多行输入，画成信纸的样子（横线跟着行高走），打字停 0.6 秒自动存盘。
-   照片：拍照或从相册选 → 当场压缩 → 大图 + 缩略图分别存进 IndexedDB。
-        列表里只解码缩略图，所以照片攒到几百张也不会卡。
+   以前照片一律堆在最下面，很别扭。
+   现在是一个流：写一段字 → 插照片 → 再写一段字 → 再插照片……
+   照片紧贴前面的字，照片后面也能接着写。
 
-   压缩很关键：iPhone 原图一张 3–5MB，不压缩的话一年就是 7GB。
-   压到长边 1280 / JPEG 0.72，一张约 170KB，每天 15 张一年约 930MB。
+   数据结构：
+     day.diary.blocks = [{ type:'text', text } | { type:'photo', id }]
+   老数据（day.diary.text 是一整段字）打开时自动转成第一个文字块，不会丢。
    ═══════════════════════════════════════════════════════════ */
 
 import { putDay, newId, fmtMain } from './store.js';
 import { el, autoGrow } from './render.js';
 import { idbGet, idbPut, idbDel } from './db.js';
 
-const FULL_MAX = 1280;      // 大图长边
+const FULL_MAX = 1280;
 const FULL_Q = 0.72;
-const THUMB_MAX = 240;      // 缩略图长边
+const THUMB_MAX = 240;
 const THUMB_Q = 0.6;
 
-/* ── object URL 缓存：避免同一张图反复解码 ─────────────── */
+/* ── object URL 缓存 ───────────────────────────────────── */
 
 const urlCache = new Map();
 const URL_CAP = 240;
@@ -34,7 +35,6 @@ export async function photoURL(id, which = 'thumb') {
 
   const url = URL.createObjectURL(blob);
   urlCache.set(key, url);
-
   if (urlCache.size > URL_CAP) {
     const oldest = urlCache.keys().next().value;
     const old = urlCache.get(oldest);
@@ -59,9 +59,9 @@ function dropURLs(id) {
 async function loadBitmap(file) {
   if (typeof createImageBitmap === 'function') {
     try {
-      /* imageOrientation 很重要：不加的话 iPhone 竖拍的照片会躺倒 */
+      /* imageOrientation 不加的话，iPhone 竖拍的照片会躺倒 */
       return await createImageBitmap(file, { imageOrientation: 'from-image' });
-    } catch { /* 落到下面的兼容路径 */ }
+    } catch { /* 落到兼容路径 */ }
   }
   const url = URL.createObjectURL(file);
   try {
@@ -108,12 +108,8 @@ async function compressFile(file) {
     const full = await drawTo(bmp, FULL_MAX, FULL_Q);
     const thumb = await drawTo(bmp, THUMB_MAX, THUMB_Q);
     return {
-      full: full.blob,
-      thumb: thumb.blob,
-      /* 存的是压缩后的实际尺寸，方便核对有没有超过长边上限 */
-      w: full.w,
-      h: full.h,
-      srcW, srcH,
+      full: full.blob, thumb: thumb.blob,
+      w: full.w, h: full.h, srcW, srcH,
       bytes: full.blob.size + thumb.blob.size,
     };
   } finally {
@@ -127,6 +123,7 @@ export async function addPhotos(day, files) {
   const list = [...files].filter(f => f && /^image\//.test(f.type));
   if (!list.length) return { added: [], failed: 0 };
 
+  const blocks = getBlocks(day);
   const added = [];
   let failed = 0;
 
@@ -140,6 +137,7 @@ export async function addPhotos(day, files) {
         w: c.w, h: c.h, bytes: c.bytes,
         createdAt: Date.now(),
       });
+      blocks.push({ type: 'photo', id });
       if (!Array.isArray(day.photos)) day.photos = [];
       day.photos.push(id);
       added.push(id);
@@ -153,10 +151,32 @@ export async function addPhotos(day, files) {
 }
 
 export async function deletePhoto(day, id) {
+  const blocks = getBlocks(day);
+  day.diary.blocks = blocks.filter(b => !(b.type === 'photo' && b.id === id));
   day.photos = (day.photos || []).filter(x => x !== id);
   await putDay(day);
   await idbDel('photos', id);
   dropURLs(id);
+}
+
+/* ── 数据：拿块列表（顺带把老数据搬过来） ──────────────── */
+
+export function getBlocks(day) {
+  if (!day.diary || typeof day.diary !== 'object') day.diary = { text: '' };
+  if (!Array.isArray(day.diary.blocks)) {
+    const t = String(day.diary.text || '');
+    day.diary.blocks = t.trim() ? [{ type: 'text', text: t }] : [];
+  }
+  return day.diary.blocks;
+}
+
+/** 给备份 / PDF 用：把整篇日记取成纯文字 */
+export function diaryText(day) {
+  return getBlocks(day)
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .filter(Boolean)
+    .join('\n');
 }
 
 /* ── 大图查看 ──────────────────────────────────────────── */
@@ -181,8 +201,6 @@ function ensureLightbox() {
   return lightboxEl;
 }
 
-let lightboxCtx = null;
-
 export async function openLightbox(day, id, ctx) {
   const lb = ensureLightbox();
   const url = await photoURL(id, 'full');
@@ -191,44 +209,38 @@ export async function openLightbox(day, id, ctx) {
   lb.box.hidden = false;
   requestAnimationFrame(() => lb.box.classList.add('show'));
 
-  lightboxCtx = { day, id, ctx };
   lb.del.onclick = async () => {
     await deletePhoto(day, id);
     closeLightbox();
     ctx.onChange();
-    ctx.refreshDiary?.();
+    renderDiary(day, ctx);
   };
 }
 
 export function closeLightbox() {
   if (!lightboxEl) return;
-  lightboxEl.box.classList.remove('show');
   const box = lightboxEl.box;
+  box.classList.remove('show');
   setTimeout(() => { box.hidden = true; }, 260);
-  lightboxCtx = null;
 }
 
-/* ── 画日记区（极简：左边日期，右上加号） ──────────────── */
+/* ── 画日记 ────────────────────────────────────────────── */
 
 export function renderDiary(day, ctx) {
   const host = document.getElementById('diary');
   if (!host) return;
   host.textContent = '';
 
+  const blocks = getBlocks(day);
+
   /* 隐藏的文件选择框 */
   const picker = el('input', {
-    type: 'file',
-    accept: 'image/*',
-    multiple: true,
-    class: 'file-hidden',
+    type: 'file', accept: 'image/*', multiple: true, class: 'file-hidden',
   });
 
-  /* 右上角的小加号 —— 和待办那个加号是同一个样式 */
+  /* 右上角的 ＋ */
   const addBtn = el('button', {
-    class: 'add-btn',
-    type: 'button',
-    'aria-label': '添加照片',
-    text: '+',
+    class: 'add-btn', type: 'button', 'aria-label': '添加内容', text: '+',
   });
 
   host.appendChild(el('div', { class: 'diary-head' }, [
@@ -236,80 +248,96 @@ export function renderDiary(day, ctx) {
     addBtn,
   ]));
 
-  /* 文字：不放提示语，也不画横线，就一个干净的白框 */
-  const ta = el('textarea', {
-    class: 'diary-text',
-    rows: '3',
-    autocorrect: 'on',
-    autocomplete: 'off',
-  });
-  ta.value = (day.diary && day.diary.text) || '';
-
-  let timer = null;
-  const save = async () => {
-    clearTimeout(timer);
-    if (!day.diary) day.diary = { text: '' };
-    if (day.diary.text === ta.value) return;
-    day.diary.text = ta.value;
-    await putDay(day);
-  };
-  ta.addEventListener('input', () => {
-    autoGrow(ta, 3);
-    clearTimeout(timer);
-    timer = setTimeout(save, 600);
-  });
-  ta.addEventListener('blur', save);
-
-  host.appendChild(ta);
-
-  const grid = el('div', { class: 'photo-grid' });
-  host.appendChild(grid);
+  const flow = el('div', { class: 'diary-flow' });
+  host.appendChild(flow);
   host.appendChild(picker);
 
-  addBtn.addEventListener('click', () => picker.click());
+  /* 点 ＋ 问一下要加哪种 */
+  const menu = el('div', { class: 'df-add', hidden: true });
+  const textBtn = el('button', { type: 'button', text: '文字' });
+  const photoBtn = el('button', { type: 'button', text: '照片' });
+  menu.append(textBtn, photoBtn);
+  host.appendChild(menu);
+
+  addBtn.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+
+  textBtn.addEventListener('click', async () => {
+    menu.hidden = true;
+    blocks.push({ type: 'text', text: '' });
+    await putDay(day);
+    paint();
+    const tas = flow.querySelectorAll('textarea.df-text');
+    const last = tas[tas.length - 1];
+    if (last) { last.focus(); last.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  });
+
+  photoBtn.addEventListener('click', () => { menu.hidden = true; picker.click(); });
 
   picker.addEventListener('change', async () => {
     if (!picker.files || !picker.files.length) return;
-    addBtn.textContent = '…';
-    addBtn.style.opacity = '.55';
+    addBtn.style.opacity = '.5';
     try {
       const { added, failed } = await addPhotos(day, picker.files);
       picker.value = '';
-      await paintPhotos();
+      paint();
       ctx.onChange();
-      if (added.length) ctx.toast(`加了 ${added.length} 张照片`);
-      if (failed) ctx.toast(`${failed} 张读不出来，跳过了`);
+      if (failed) ctx.toast(`${failed} 张读不出来`);
     } catch (e) {
       ctx.toast('加照片失败：' + (e.message || e));
     } finally {
-      addBtn.textContent = '+';
       addBtn.style.opacity = '';
     }
   });
 
-  async function paintPhotos() {
-    grid.textContent = '';
-    const ids = day.photos || [];
+  /* ── 画每一块 ──────────────────────────────────────── */
 
-    for (const id of ids) {
-      const url = await photoURL(id, 'thumb');
-      const cell = el('button', { class: 'photo-cell', type: 'button' });
-      if (url) {
-        cell.appendChild(el('img', { src: url, alt: '', loading: 'lazy' }));
-      } else {
-        cell.classList.add('missing');
-        cell.appendChild(el('span', { text: '?' }));
+  function paint() {
+    flow.textContent = '';
+
+    blocks.forEach((b, idx) => {
+      if (b.type === 'photo') {
+        const cell = el('button', { class: 'df-photo', type: 'button' });
+        photoURL(b.id, 'thumb').then((url) => {
+          if (url) cell.appendChild(el('img', { src: url, alt: '', loading: 'lazy' }));
+          else { cell.classList.add('missing'); cell.textContent = '?'; }
+        });
+        cell.addEventListener('click', () => openLightbox(day, b.id, ctx));
+        flow.appendChild(cell);
+        return;
       }
-      cell.addEventListener('click', () => openLightbox(day, id, ctx));
-      grid.appendChild(cell);
-    }
+
+      /* 文字块 */
+      const ta = el('textarea', { class: 'df-text', rows: '1', autocorrect: 'on', autocomplete: 'off' });
+      ta.value = b.text || '';
+
+      let timer = null;
+      const save = async () => {
+        clearTimeout(timer);
+        if ((b.text || '') === ta.value) return;
+        b.text = ta.value;
+        /* 空的文字块不留 */
+        if (!b.text.trim() && blocks.length > 1) {
+          const at = blocks.indexOf(b);
+          if (at >= 0) blocks.splice(at, 1);
+        }
+        await putDay(day);
+      };
+      ta.addEventListener('input', () => {
+        autoGrow(ta, 1);
+        clearTimeout(timer);
+        timer = setTimeout(save, 600);
+      });
+      ta.addEventListener('blur', save);
+
+      flow.appendChild(ta);
+    });
+
+    requestAnimationFrame(() => {
+      flow.querySelectorAll('textarea.df-text').forEach(t => autoGrow(t, 1));
+    });
   }
 
-  requestAnimationFrame(() => {
-    autoGrow(ta, 3);
-    paintPhotos();
-  });
+  paint();
 
-  /* 换天的时候把大图收起来，别停在上一张上 */
   if (lightboxEl && !lightboxEl.box.hidden) closeLightbox();
 }

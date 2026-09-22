@@ -46,6 +46,8 @@ export function createSession({
     startedAt,
     endedAt: null,
     away: [],          // [{ from, to }]，to === null 表示此刻还在离开中
+    marks: [],         // [{ kind, from, to }] 息屏 / 查题 / 倒计时 的标记段
+    note: '',          // 结束时强制写的那一句总结
     unknownMs: 0,      // 页面被系统回收后无法得知的那段
     strict: !!strict,
     interrupted: false,
@@ -91,6 +93,7 @@ export function endSession(s, at) {
   if (s.endedAt) return s;
   const open = s.away.find(a => a.to === null);
   if (open) open.to = Math.max(at, open.from);
+  closeAllMarks(s, at);
   s.endedAt = at;
   return s;
 }
@@ -98,6 +101,53 @@ export function endSession(s, at) {
 /** 页面被系统回收后重开，把无从得知的那段记下来 */
 export function addUnknown(s, ms) {
   if (ms > 0) s.unknownMs += ms;
+  return s;
+}
+
+/* ── 标记段（息屏 / 查题 / 倒计时） ─────────────────────
+   这些**不影响时长计算** —— 按你的要求，全都算作专注。
+   它们只是在时间线上涂个颜色，让你回看时知道那会儿在干嘛。
+   ─────────────────────────────────────────────────────── */
+
+export const MARK_KINDS = ['screenoff', 'lookup', 'countdown'];
+
+/** 这一段是不是开着 */
+export function markOpen(s, kind) {
+  return (s.marks || []).some(m => m.kind === kind && m.to === null);
+}
+
+/** 开一段标记。同一种标记如果已经开着，先关掉。 */
+export function startMark(s, kind, at) {
+  if (s.endedAt) return s;
+  if (!Array.isArray(s.marks)) s.marks = [];
+  const open = s.marks.find(m => m.kind === kind && m.to === null);
+  if (open) open.to = Math.max(at, open.from);
+  s.marks.push({ kind, from: at, to: null });
+  return s;
+}
+
+/** 关掉某一种标记 */
+export function stopMark(s, kind, at) {
+  if (!Array.isArray(s.marks)) return s;
+  for (const m of s.marks) {
+    if (m.kind === kind && m.to === null) m.to = Math.max(at, m.from);
+  }
+  return s;
+}
+
+/** 切换：开着就关，关着就开。返回切换后的状态 */
+export function toggleMark(s, kind, at) {
+  if (markOpen(s, kind)) { stopMark(s, kind, at); return false; }
+  startMark(s, kind, at);
+  return true;
+}
+
+/** 把还开着的标记都收尾（结束时用） */
+export function closeAllMarks(s, at) {
+  if (!Array.isArray(s.marks)) return s;
+  for (const m of s.marks) {
+    if (m.to === null) m.to = Math.max(at, m.from);
+  }
   return s;
 }
 
@@ -120,9 +170,7 @@ export function summarize(s, now = Date.now()) {
   const segments = [];
   let cursor = s.startedAt;
   let awayMs = 0;
-  let deductedMs = 0;
   let awayCount = 0;
-  let longAwayCount = 0;
 
   for (const raw of away) {
     const from = Math.max(raw.from, s.startedAt);
@@ -138,7 +186,6 @@ export function summarize(s, now = Date.now()) {
 
     awayMs += ms;
     awayCount++;
-    if (ms >= GRACE_MS) { deductedMs += ms; longAwayCount++; }
 
     cursor = Math.max(cursor, to);
   }
@@ -147,16 +194,30 @@ export function summarize(s, now = Date.now()) {
     segments.push({ kind: 'focus', from: cursor, to: end, ms: end - cursor });
   }
 
-  const effectiveMs = Math.max(0, totalMs - deductedMs - s.unknownMs);
+  /* 标记段：息屏 / 查题 / 倒计时。
+     它们**不扣时长** —— 按你的要求全都算专注，只是给时间线上个色。 */
+  const marks = (s.marks || [])
+    .map(m => ({ kind: m.kind, from: m.from, to: m.to ?? end }))
+    .filter(m => m.to > m.from)
+    .map(m => ({ ...m, ms: m.to - m.from }))
+    .sort((a, b) => a.from - b.from);
+
+  const markMs = {};
+  for (const m of marks) markMs[m.kind] = (markMs[m.kind] || 0) + m.ms;
+
+  /* 唯一还会扣的只有「页面被系统杀掉、无从得知」的那段。
+     离开（切走 / 息屏）一律不扣。 */
+  const effectiveMs = Math.max(0, totalMs - s.unknownMs);
 
   return {
     totalMs,
     awayMs,
-    deductedMs,
     unknownMs: s.unknownMs,
     effectiveMs,
     awayCount,
-    longAwayCount,
+    marks,
+    markMs,
+    note: s.note || '',
     ratio: totalMs > 0 ? effectiveMs / totalMs : 0,
     segments,
     interrupted: !!s.interrupted,
@@ -261,6 +322,10 @@ export function fromRecord(o) {
     ...createSession({ id: o.id, date: o.date, startedAt: o.startedAt }),
     ...o,
     away: Array.isArray(o.away) ? o.away.map(a => ({ from: a.from, to: a.to ?? null })) : [],
+    marks: Array.isArray(o.marks)
+      ? o.marks.map(m => ({ kind: m.kind, from: m.from, to: m.to ?? null }))
+      : [],
+    note: o.note || '',
     unknownMs: Number(o.unknownMs) || 0,
     strict: !!o.strict,
     interrupted: !!o.interrupted,

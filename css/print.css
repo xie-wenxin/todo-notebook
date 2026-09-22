@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    print.css — 导出 PDF 的排版
 
    打印时只用白底黑字，不跟主题色走：一来省墨，二来深色主题
@@ -159,16 +159,5 @@
     border-radius: 1.5mm;
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  /* ── 页脚 ────────────────────────────────────────── */
-
-  .pr-foot {
-    margin-top: 6mm;
-    padding-top: 2mm;
-    border-top: .4pt solid #ddd;
-    font-size: 8pt;
-    color: #aaa;
-    text-align: center;
   }
 }

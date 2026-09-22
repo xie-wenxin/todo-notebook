@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN" data-theme="mint">
 <head>
 <meta charset="utf-8">
@@ -46,6 +46,8 @@
 
       <section class="blocks" id="blocks"></section>
 
+      <section class="habitbar" id="habitsBar"></section>
+
       <section class="diary" id="diary"></section>
 
       <div class="day-tail">
@@ -84,29 +86,7 @@
 
 <div class="sheet" id="themeSheet" hidden>
   <div class="sheet-grab"></div>
-  <h3 class="sheet-title">外观</h3>
-  <p class="sheet-note">颜色只改这一天，翻到别的天各有各的颜色；字号是全局的</p>
   <div class="swatches" id="swatches"></div>
-
-  <div class="fs-row">
-    <span class="fs-label">字号</span>
-    <div class="fs-btns" id="fsBtns">
-      <button type="button" data-fs="1">标准 <i>19px</i></button>
-      <button type="button" data-fs="1.15">大 <i>22px</i></button>
-      <button type="button" data-fs="1.32">特大 <i>25px</i></button>
-    </div>
-  </div>
-
-  <div class="fs-row">
-    <span class="fs-label">专注模式</span>
-    <div class="fs-btns wide" id="strictBtns">
-      <button type="button" data-strict="0">宽松 <i>息屏照走</i></button>
-      <button type="button" data-strict="1">严格 <i>离开即作废</i></button>
-    </div>
-  </div>
-  <p class="sheet-note tight">宽松：息屏、切去查题都继续计时，只把它们记进「离开账本」。严格：一离开就作废整个会话。</p>
-
-  <button class="sheet-close" id="themeClose">好了</button>
 </div>
 
 <!-- ── 小本子：周历 / 习惯 / 备份 ─────────────────── -->
@@ -163,44 +143,43 @@
   </div>
 </div>
 
-<!-- ── 专注面板（左划进来） ─────────────────────────── -->
+<!-- ── 专注页（左划进来） ───────────────────────────── -->
 <div class="focus" id="focusLayer" hidden>
-  <button class="f-close" id="fClose" type="button" aria-label="返回">✕</button>
   <div class="focus-main">
 
-    <div class="f-head">
-      <div class="f-block" id="fBlockName">—</div>
-      <div class="f-block-sub" id="fBlockSub"></div>
-      <div class="f-block-time" id="fBlockTime"></div>
+    <!-- ① 最上面一行：时间块名 + 时间段 -->
+    <div class="f-top">
+      <span class="f-block" id="fBlockName">—</span>
+      <span class="f-time" id="fBlockTime"></span>
     </div>
 
-    <div class="f-clock-wrap">
+    <!-- ② 中间：待办名 + 大计时器 -->
+    <div class="f-center">
+      <div class="f-todo" id="fTodoName" hidden></div>
       <div class="f-clock" id="fClock">00:00:00</div>
-      <div class="f-hint" id="fHint">长按下面的圆环开始</div>
+      <div class="f-cdline" id="fCdLine" hidden></div>
+      <button class="f-start" id="fStart" type="button" aria-label="开始">▶</button>
     </div>
 
-    <div class="f-stats" id="fStats"></div>
-    <div class="f-timeline" id="fTimeline"></div>
-
-    <div class="f-hold" id="fHold">
-      <svg viewBox="0 0 120 120" class="f-ring" aria-hidden="true">
-        <circle class="f-ring-bg" cx="60" cy="60" r="52"></circle>
-        <circle class="f-ring-fg" id="fRingFg" cx="60" cy="60" r="52"
-                transform="rotate(-90 60 60)"></circle>
-      </svg>
-      <div class="f-hold-text" id="fHoldText">长按开始</div>
+    <!-- ③ 底部五个小圆圈 -->
+    <div class="f-bar" id="fBar">
+      <button class="f-circle" id="fLookup" type="button" aria-label="查题">🫘</button>
+      <button class="f-circle" id="fScreen" type="button" aria-label="息屏">📴</button>
+      <button class="f-circle" id="fLights" type="button" aria-label="熄灯">🌙</button>
+      <button class="f-circle" id="fCd" type="button" aria-label="倒计时">⏱</button>
+      <button class="f-circle exit" id="fExit" type="button" aria-label="退出">✕</button>
     </div>
 
-    <button class="f-done" id="fDoneBtn" type="button" hidden>完成</button>
+    <div class="f-picker" id="fCdPicker" hidden></div>
 
-    <div class="f-foot" id="fFoot">
-      <button class="f-btn" id="fLights" type="button">🌙 熄灯</button>
-      <button class="f-btn" id="fPick" type="button">换时间块</button>
+    <!-- 长按 15 秒之后强制写一句话 -->
+    <div class="f-note" id="fNote" hidden>
+      <textarea class="f-note-text" id="fNoteText" rows="3"
+                autocorrect="on" autocomplete="off"></textarea>
+      <button class="f-note-ok" id="fNoteOk" type="button" aria-label="确定">✓</button>
     </div>
 
   </div>
-
-  <div class="f-picker" id="fPicker" hidden></div>
 </div>
 
 <!-- ── 日总结（右划进来） ───────────────────────────── -->
@@ -219,6 +198,7 @@
     <section class="sum-card">
       <div id="sumDonut"></div>
       <div class="donut-legend" id="sumLegend"></div>
+      <div class="day-timeline" id="sumTimeline"></div>
     </section>
 
     <section class="sum-card">
@@ -227,19 +207,10 @@
     </section>
 
     <section class="sum-card">
-      <h3 class="sum-h">习惯</h3>
-      <div class="habits" id="sumHabits"></div>
-    </section>
-
-    <section class="sum-card">
       <h3 class="sum-h">睡眠</h3>
       <div class="sleep-row" id="sumSleep"></div>
     </section>
 
-    <section class="sum-card">
-      <h3 class="sum-h">全天专注时间线</h3>
-      <div class="day-timeline" id="sumTimeline"></div>
-    </section>
 
     <p class="sum-foot">右划或点 ✕ 收起</p>
   </div>
