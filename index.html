@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="mint">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="待办本子">
+<meta name="format-detection" content="telephone=no">
+<title>待办本子</title>
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="stylesheet" href="./css/theme.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/print.css">
+</head>
+<body>
+
+<div class="book">
+  <div class="page" id="page">
+
+    <!-- ── 顶部日期条 ───────────────────────────────── -->
+    <header class="topbar">
+      <button class="nav-btn" id="prevDay" aria-label="前一天">‹</button>
+
+      <button class="date-btn" id="dateBtn" aria-label="选择日期">
+        <span class="date-main" id="dateMain">—</span>
+        <span class="date-sub" id="dateSub">—</span>
+      </button>
+
+      <button class="nav-btn" id="nextDay" aria-label="后一天">›</button>
+      <button class="icon-btn" id="themeBtn" aria-label="换今天的颜色">🎨</button>
+    </header>
+
+    <!-- ── 正文：时间块 ─────────────────────────────── -->
+    <main class="day" id="day">
+      <div class="day-head">
+        <div class="dh-left">
+          <span class="dh-label">今日计划</span>
+          <span class="dh-plan" id="dhPlan">—</span>
+        </div>
+        <div class="dh-right" id="dhRight"></div>
+      </div>
+
+      <section class="blocks" id="blocks"></section>
+
+      <section class="diary" id="diary"></section>
+
+      <div class="day-tail">
+        <div class="tail-mark">— 到底了 —</div>
+        <div class="tail-hint" id="tailHint">左划进入专注 · 右划看总结</div>
+      </div>
+    </main>
+
+    <!-- ── 底部状态条 ───────────────────────────────── -->
+    <footer class="statusbar">
+      <button class="book-btn" id="bookBtn" aria-label="打开小本子">
+        <span class="bb-icon">📓</span>
+        <span class="bb-text">周历</span>
+      </button>
+
+      <button class="book-btn" id="notesBtn" aria-label="打开便签本">
+        <span class="bb-icon">📝</span>
+        <span class="bb-text">便签</span>
+      </button>
+
+      <div class="goal" id="goal">
+        <div class="goal-row">
+          <span class="goal-name">今日有效专注</span>
+          <strong class="goal-now" id="goalNow">0h00m</strong>
+          <span class="goal-of">/ 12h</span>
+        </div>
+        <div class="goal-bar"><i id="goalFill"></i></div>
+      </div>
+    </footer>
+
+  </div>
+</div>
+
+<!-- ── 配色面板 ───────────────────────────────────── -->
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="sheet" id="themeSheet" hidden>
+  <div class="sheet-grab"></div>
+  <h3 class="sheet-title">外观</h3>
+  <p class="sheet-note">颜色只改这一天，翻到别的天各有各的颜色；字号是全局的</p>
+  <div class="swatches" id="swatches"></div>
+
+  <div class="fs-row">
+    <span class="fs-label">字号</span>
+    <div class="fs-btns" id="fsBtns">
+      <button type="button" data-fs="1">标准 <i>19px</i></button>
+      <button type="button" data-fs="1.15">大 <i>22px</i></button>
+      <button type="button" data-fs="1.32">特大 <i>25px</i></button>
+    </div>
+  </div>
+
+  <div class="fs-row">
+    <span class="fs-label">专注模式</span>
+    <div class="fs-btns wide" id="strictBtns">
+      <button type="button" data-strict="0">宽松 <i>息屏照走</i></button>
+      <button type="button" data-strict="1">严格 <i>离开即作废</i></button>
+    </div>
+  </div>
+  <p class="sheet-note tight">宽松：息屏、切去查题都继续计时，只把它们记进「离开账本」。严格：一离开就作废整个会话。</p>
+
+  <button class="sheet-close" id="themeClose">好了</button>
+</div>
+
+<!-- ── 小本子：周历 / 习惯 / 备份 ─────────────────── -->
+<div class="sheet sheet-tall" id="bookSheet" hidden>
+  <div class="sheet-grab"></div>
+
+  <div class="book-sheet-head">
+    <h3 class="sheet-title">小本子</h3>
+    <button class="nav-btn sm" id="bookClose" type="button" aria-label="收起">✕</button>
+  </div>
+
+  <div class="book-tabs" id="bookTabs">
+    <button type="button" data-tab="weeks" class="on">周历</button>
+    <button type="button" data-tab="habits">习惯</button>
+    <button type="button" data-tab="io">备份</button>
+  </div>
+
+  <!-- ① 周历：一周一行，往下滑就是往回看 -->
+  <div class="book-tab-body" id="tabWeeks">
+    <div class="strip-modes" id="stripModes">
+      <button type="button" data-mode="todo">待办完成</button>
+      <button type="button" data-mode="focus">专注时长</button>
+    </div>
+
+    <div class="wk-head" id="weekHead"></div>
+
+    <div class="wk-scroll" id="weekScroll">
+      <div class="wk-rows" id="weekRows"></div>
+      <p class="wk-end" id="weekEnd" hidden>—— 这是你记录的第一周 ——</p>
+    </div>
+
+    <p class="sheet-note tight" id="stripNote"></p>
+  </div>
+
+  <!-- ② 习惯：行=习惯，列=周 -->
+  <div class="book-tab-body" id="tabHabits" hidden>
+    <div class="hx-scroll" id="matrix"></div>
+    <p class="sheet-note tight" id="matrixTotals"></p>
+  </div>
+
+  <!-- ③ 备份与导出 -->
+  <div class="book-tab-body" id="tabIo" hidden>
+    <div class="book-io">
+      <button type="button" id="exportBtn" class="io-btn primary">导出备份</button>
+      <button type="button" id="importBtn" class="io-btn">导入备份</button>
+      <button type="button" id="pdfDayBtn" class="io-btn">导出这天 PDF</button>
+      <button type="button" id="pdfMonthBtn" class="io-btn">导出本月 PDF</button>
+    </div>
+    <p class="sheet-note tight" id="ioNote">
+      备份是一个 .zip，里面装着你全部的待办、日记、照片和便签。
+      导出的文件存到「文件」App 里最稳 —— 浏览器里的数据说没就没。
+    </p>
+    <input type="file" id="importFile" accept=".zip,application/zip" class="file-hidden">
+  </div>
+</div>
+
+<!-- ── 专注面板（左划进来） ─────────────────────────── -->
+<div class="focus" id="focusLayer" hidden>
+  <button class="f-close" id="fClose" type="button" aria-label="返回">✕</button>
+  <div class="focus-main">
+
+    <div class="f-head">
+      <div class="f-block" id="fBlockName">—</div>
+      <div class="f-block-sub" id="fBlockSub"></div>
+      <div class="f-block-time" id="fBlockTime"></div>
+    </div>
+
+    <div class="f-clock-wrap">
+      <div class="f-clock" id="fClock">00:00:00</div>
+      <div class="f-hint" id="fHint">长按下面的圆环开始</div>
+    </div>
+
+    <div class="f-stats" id="fStats"></div>
+    <div class="f-timeline" id="fTimeline"></div>
+
+    <div class="f-hold" id="fHold">
+      <svg viewBox="0 0 120 120" class="f-ring" aria-hidden="true">
+        <circle class="f-ring-bg" cx="60" cy="60" r="52"></circle>
+        <circle class="f-ring-fg" id="fRingFg" cx="60" cy="60" r="52"
+                transform="rotate(-90 60 60)"></circle>
+      </svg>
+      <div class="f-hold-text" id="fHoldText">长按开始</div>
+    </div>
+
+    <button class="f-done" id="fDoneBtn" type="button" hidden>完成</button>
+
+    <div class="f-foot" id="fFoot">
+      <button class="f-btn" id="fLights" type="button">🌙 熄灯</button>
+      <button class="f-btn" id="fPick" type="button">换时间块</button>
+    </div>
+
+  </div>
+
+  <div class="f-picker" id="fPicker" hidden></div>
+</div>
+
+<!-- ── 日总结（右划进来） ───────────────────────────── -->
+<div class="summary" id="summaryLayer" hidden>
+  <div class="summary-main">
+
+    <header class="sum-head">
+      <button class="nav-btn" id="sumClose" type="button" aria-label="关闭">✕</button>
+      <div class="sum-titles">
+        <div class="sum-title" id="sumTitle">今日总结</div>
+        <div class="sum-date" id="sumDate">—</div>
+      </div>
+      <span class="sum-head-pad"></span>
+    </header>
+
+    <section class="sum-card">
+      <div id="sumDonut"></div>
+      <div class="donut-legend" id="sumLegend"></div>
+    </section>
+
+    <section class="sum-card">
+      <h3 class="sum-h">日程</h3>
+      <div class="sum-blocks" id="sumBlocks"></div>
+    </section>
+
+    <section class="sum-card">
+      <h3 class="sum-h">习惯</h3>
+      <div class="habits" id="sumHabits"></div>
+    </section>
+
+    <section class="sum-card">
+      <h3 class="sum-h">睡眠</h3>
+      <div class="sleep-row" id="sumSleep"></div>
+    </section>
+
+    <section class="sum-card">
+      <h3 class="sum-h">全天专注时间线</h3>
+      <div class="day-timeline" id="sumTimeline"></div>
+    </section>
+
+    <p class="sum-foot">右划或点 ✕ 收起</p>
+  </div>
+</div>
+
+<!-- ── 便签本（第二个小本子） ───────────────────────── -->
+<div class="notes" id="notesLayer" hidden>
+
+  <!-- 列表：一列一列的便签 -->
+  <div class="notes-view" id="notesList">
+    <header class="notes-head">
+      <button class="nav-btn" id="notesClose" type="button" aria-label="关闭">✕</button>
+      <div class="notes-title">便签</div>
+      <button class="add-btn" id="noteAdd" type="button" aria-label="新建便签">+</button>
+    </header>
+    <div class="notes-body">
+      <div class="notes-grid" id="notesGrid"></div>
+      <p class="notes-empty" id="notesEmpty" hidden>
+        还没有便签。<br>点右上角的 ＋ 随手记一条。
+      </p>
+    </div>
+  </div>
+
+  <!-- 编辑：整页就是这张便签 -->
+  <div class="notes-view" id="notesEditor" hidden>
+    <header class="notes-head">
+      <button class="nav-btn" id="noteBack" type="button" aria-label="返回">‹</button>
+      <div class="note-colors" id="noteColors"></div>
+      <button class="icon-btn" id="notePin" type="button" aria-label="置顶">📌</button>
+      <button class="icon-btn" id="noteDel" type="button" aria-label="删除">🗑</button>
+    </header>
+    <textarea class="note-text" id="noteText"
+              autocorrect="on" autocomplete="off" spellcheck="false"></textarea>
+  </div>
+
+</div>
+
+<!-- ── 轻提示 ─────────────────────────────────────── -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ── 出错时别白屏：把错误直接摆出来 ─────────────── -->
+<pre class="errbox" id="errbox" hidden></pre>
+
+<!-- ── 打印（导出 PDF）用的容器，平时是空的 ───────── -->
+<div id="printRoot"></div>
+
+<script>
+/* 放在模块之前，这样连模块加载失败都能抓到 */
+(function () {
+  function show(head, detail) {
+    var box = document.getElementById('errbox');
+    if (!box) return;
+    box.hidden = false;
+    box.textContent = head + (detail ? '\n\n' + detail : '');
+  }
+  window.addEventListener('error', function (e) {
+    show('出错了：' + (e.message || '未知错误'),
+      (e.filename || '') + (e.lineno ? ':' + e.lineno : '') +
+      (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason || {};
+    show('出错了：' + (r.message || String(r)), r.stack || '');
+  });
+})();
+</script>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "todo-notebook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "待办本子 —— 一本会自己翻页的日程本（零依赖 PWA）",
+  "type": "module",
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node tools/test-focus.mjs && node tools/test-zip.mjs && node tools/smoke.mjs",
+    "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/make-icons.ps1"
+  }
+}

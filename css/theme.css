@@ -1,0 +1,191 @@
+/* ═══════════════════════════════════════════════════════════
+   theme.css — 本子的颜色
+   每套主题只定义 7 个变量，base.css 全部按变量走。
+   浅色系：纸浅、字深；饱和系：纸深、字浅。两套都保证对比度够。
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── 浅色系 ───────────────────────────────────────────── */
+
+[data-theme="mint"] {            /* 薄荷浅绿（默认） */
+  --paper:      #E9F6EF;
+  --paper-deep: #DCEFE4;
+  --card:       #F3FBF7;
+  --ink:        #1E3A31;
+  --ink-soft:   #5C7C6F;
+  --ink-faint:  #8FA79D;
+  --accent:     #3E8F71;
+  --accent-2:   #7CC4A6;
+  --line:       rgba(30, 58, 49, .13);
+  --shadow:     rgba(30, 58, 49, .10);
+}
+
+[data-theme="cream"] {           /* 奶油黄 */
+  --paper:      #FDF6E3;
+  --paper-deep: #F6EBCF;
+  --card:       #FFFCF2;
+  --ink:        #3D3520;
+  --ink-soft:   #7C7150;
+  --ink-faint:  #A79B78;
+  --accent:     #B98D1B;
+  --accent-2:   #E4C46A;
+  --line:       rgba(61, 53, 32, .13);
+  --shadow:     rgba(61, 53, 32, .10);
+}
+
+[data-theme="sky"] {             /* 天空蓝 */
+  --paper:      #EAF3FB;
+  --paper-deep: #DCEBF8;
+  --card:       #F4F9FE;
+  --ink:        #1F3346;
+  --ink-soft:   #5C7488;
+  --ink-faint:  #8FA3B4;
+  --accent:     #3D80B4;
+  --accent-2:   #86B8DC;
+  --line:       rgba(31, 51, 70, .13);
+  --shadow:     rgba(31, 51, 70, .10);
+}
+
+[data-theme="sakura"] {          /* 樱花粉 */
+  --paper:      #FDF0F3;
+  --paper-deep: #F9E2E8;
+  --card:       #FFF7F9;
+  --ink:        #43272F;
+  --ink-soft:   #85626C;
+  --ink-faint:  #B3949E;
+  --accent:     #B85C78;
+  --accent-2:   #E5A3B7;
+  --line:       rgba(67, 39, 47, .13);
+  --shadow:     rgba(67, 39, 47, .10);
+}
+
+[data-theme="lavender"] {        /* 薰衣草紫 */
+  --paper:      #F2EFFB;
+  --paper-deep: #E7E2F6;
+  --card:       #F9F7FE;
+  --ink:        #2C2745;
+  --ink-soft:   #67618A;
+  --ink-faint:  #9A95B5;
+  --accent:     #6E5CB8;
+  --accent-2:   #AC9BE0;
+  --line:       rgba(44, 39, 69, .13);
+  --shadow:     rgba(44, 39, 69, .10);
+}
+
+[data-theme="apricot"] {         /* 暖杏橘 */
+  --paper:      #FDF1E7;
+  --paper-deep: #F8E5D4;
+  --card:       #FFF8F1;
+  --ink:        #402C1C;
+  --ink-soft:   #826750;
+  --ink-faint:  #B39A82;
+  --accent:     #BE6F2E;
+  --accent-2:   #E7B183;
+  --line:       rgba(64, 44, 28, .13);
+  --shadow:     rgba(64, 44, 28, .10);
+}
+
+[data-theme="oat"] {             /* 燕麦米 */
+  --paper:      #F7F3EC;
+  --paper-deep: #EDE7DC;
+  --card:       #FCFAF5;
+  --ink:        #38312A;
+  --ink-soft:   #776D60;
+  --ink-faint:  #A79D8F;
+  --accent:     #8F7A55;
+  --accent-2:   #C8B695;
+  --line:       rgba(56, 49, 42, .13);
+  --shadow:     rgba(56, 49, 42, .10);
+}
+
+[data-theme="turquoise"] {       /* 松石青 */
+  --paper:      #E6F4F1;
+  --paper-deep: #D7EDE8;
+  --card:       #F1FAF8;
+  --ink:        #1B3833;
+  --ink-soft:   #557C74;
+  --ink-faint:  #89AAA3;
+  --accent:     #2F8478;
+  --accent-2:   #7CC4B6;
+  --line:       rgba(27, 56, 51, .13);
+  --shadow:     rgba(27, 56, 51, .10);
+}
+
+[data-theme="mist"] {            /* 雾霾灰蓝 */
+  --paper:      #EDF1F5;
+  --paper-deep: #E0E7EF;
+  --card:       #F6F9FC;
+  --ink:        #2A333C;
+  --ink-soft:   #63707D;
+  --ink-faint:  #97A2AE;
+  --accent:     #587089;
+  --accent-2:   #96AEC4;
+  --line:       rgba(42, 51, 60, .13);
+  --shadow:     rgba(42, 51, 60, .10);
+}
+
+/* ── 饱和系（整页就是这个颜色，字反过来是浅的） ────── */
+
+[data-theme="deepblue"] {        /* 深邃蓝 */
+  --paper:      #2A4674;
+  --paper-deep: #233C66;
+  --card:       #33517F;
+  --ink:        #F1F6FC;
+  --ink-soft:   #B6CBE6;
+  --ink-faint:  #8AA4C6;
+  --accent:     #9CC4EE;
+  --accent-2:   #6E9DD4;
+  --line:       rgba(255, 255, 255, .16);
+  --shadow:     rgba(0, 0, 0, .28);
+}
+
+[data-theme="forest"] {          /* 墨绿 */
+  --paper:      #2C5749;
+  --paper-deep: #254A3E;
+  --card:       #356352;
+  --ink:        #F0F7F4;
+  --ink-soft:   #B4D2C7;
+  --ink-faint:  #88AC9F;
+  --accent:     #9AD2BB;
+  --accent-2:   #6BAF94;
+  --line:       rgba(255, 255, 255, .16);
+  --shadow:     rgba(0, 0, 0, .28);
+}
+
+[data-theme="wine"] {            /* 酒红 */
+  --paper:      #813748;
+  --paper-deep: #702F3E;
+  --card:       #8F4251;
+  --ink:        #FBF2F4;
+  --ink-soft:   #E3B7C0;
+  --ink-faint:  #C08D98;
+  --accent:     #F0A9B8;
+  --accent-2:   #CE7C8E;
+  --line:       rgba(255, 255, 255, .16);
+  --shadow:     rgba(0, 0, 0, .28);
+}
+
+[data-theme="caramel"] {         /* 焦糖棕 */
+  --paper:      #A85D1C;
+  --paper-deep: #935117;
+  --card:       #B56B29;
+  --ink:        #FDF6EE;
+  --ink-soft:   #F0CFAC;
+  --ink-faint:  #D3A97C;
+  --accent:     #F5C592;
+  --accent-2:   #D69C60;
+  --line:       rgba(255, 255, 255, .18);
+  --shadow:     rgba(0, 0, 0, .28);
+}
+
+[data-theme="berry"] {           /* 莓果紫 */
+  --paper:      #634784;
+  --paper-deep: #563C74;
+  --card:       #6E5290;
+  --ink:        #F8F4FC;
+  --ink-soft:   #CFBCE4;
+  --ink-faint:  #A892C4;
+  --accent:     #C8AEE4;
+  --accent-2:   #A184C8;
+  --line:       rgba(255, 255, 255, .16);
+  --shadow:     rgba(0, 0, 0, .28);
+}

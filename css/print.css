@@ -1,0 +1,174 @@
+/* ═══════════════════════════════════════════════════════════
+   print.css — 导出 PDF 的排版
+
+   打印时只用白底黑字，不跟主题色走：一来省墨，二来深色主题
+   打印出来会是白字白纸，什么都看不见。
+   只有专注时间线保留一点绿色，其它全是灰阶。
+   ═══════════════════════════════════════════════════════════ */
+
+/* 屏幕上永远不显示，只在打印时出现 */
+#printRoot { display: none; }
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm 12mm 14mm;
+  }
+
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  /* 除了打印容器，其它全部藏起来 */
+  body > *:not(#printRoot) { display: none !important; }
+
+  #printRoot { display: block !important; }
+
+  .pr-page {
+    color: #1a1a1a;
+    background: #fff;
+    font-family: -apple-system, "PingFang SC", "Songti SC", serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    break-after: page;
+    page-break-after: always;
+  }
+  .pr-page:last-child { break-after: auto; page-break-after: auto; }
+
+  /* ── 页眉 ────────────────────────────────────────── */
+
+  .pr-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 2px solid #1a1a1a;
+    padding-bottom: 3mm;
+    margin-bottom: 4mm;
+  }
+  .pr-date { margin: 0; font-size: 20pt; font-weight: 700; letter-spacing: .02em; }
+  .pr-dow { font-size: 11pt; color: #666; }
+
+  /* ── 大数字 ──────────────────────────────────────── */
+
+  .pr-big { margin-bottom: 4mm; }
+  .pr-big-main { font-size: 15pt; }
+  .pr-big-main b { font-size: 20pt; font-weight: 700; }
+  .pr-big-main span { color: #444; }
+  .pr-big-sub { font-size: 9.5pt; color: #666; margin-top: 1mm; }
+
+  /* ── 全天时间线 ──────────────────────────────────── */
+
+  .pr-tl {
+    display: block;
+    width: 100%;
+    height: 6mm;
+    background: #eee;
+    border-radius: 2px;
+  }
+  .pr-tl-tick { stroke: #ddd; stroke-width: 1; }
+  .pr-tl-focus { fill: #3E8F71; }
+
+  .pr-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 8pt;
+    color: #888;
+    margin-top: 1mm;
+    margin-bottom: 5mm;
+  }
+
+  /* ── 标题 ────────────────────────────────────────── */
+
+  .pr-h2 {
+    font-size: 11pt;
+    font-weight: 700;
+    color: #333;
+    margin: 5mm 0 2mm;
+    padding-bottom: 1mm;
+    border-bottom: 1px solid #ddd;
+    letter-spacing: .06em;
+  }
+
+  /* ── 时间块 ──────────────────────────────────────── */
+
+  .pr-blocks { display: block; }
+
+  .pr-block {
+    padding: 2mm 0 2mm 3mm;
+    border-left: 2.5pt solid #3E8F71;
+    margin-bottom: 2.5mm;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .pr-block-top {
+    display: flex;
+    align-items: baseline;
+    gap: 3mm;
+  }
+  .pr-block-time { font-size: 9pt; color: #666; font-variant-numeric: tabular-nums; }
+  .pr-block-name { font-size: 11.5pt; }
+  .pr-block-got { margin-left: auto; font-size: 9.5pt; color: #3E8F71; font-weight: 600; }
+  .pr-block-got.muted { color: #aaa; font-weight: 400; }
+
+  .pr-habit { font-size: 9pt; color: #777; margin-top: .5mm; }
+  .pr-none { font-size: 9pt; color: #bbb; margin-top: .5mm; }
+
+  .pr-todos {
+    list-style: none;
+    margin: 1.5mm 0 0;
+    padding: 0;
+  }
+  .pr-todo {
+    display: flex;
+    gap: 2mm;
+    padding: .8mm 0;
+    border-bottom: .4pt solid #eee;
+    font-size: 10pt;
+  }
+  .pr-todo:last-child { border-bottom: 0; }
+  .pr-box { flex: none; color: #999; }
+  .pr-todo.done { color: #999; text-decoration: line-through; }
+  .pr-todo.done .pr-box { color: #3E8F71; }
+
+  .pr-line { font-size: 10pt; }
+
+  /* ── 日记 ────────────────────────────────────────── */
+
+  .pr-diary {
+    white-space: pre-wrap;
+    font-size: 10.5pt;
+    line-height: 1.7;
+    padding: 2mm 0;
+    margin-bottom: 3mm;
+    border-top: .4pt solid #eee;
+    border-bottom: .4pt solid #eee;
+  }
+
+  .pr-photos {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2mm;
+    margin-top: 2mm;
+  }
+  .pr-photo {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 1.5mm;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ── 页脚 ────────────────────────────────────────── */
+
+  .pr-foot {
+    margin-top: 6mm;
+    padding-top: 2mm;
+    border-top: .4pt solid #ddd;
+    font-size: 8pt;
+    color: #aaa;
+    text-align: center;
+  }
+}
