@@ -2048,3 +2048,270 @@ button {
 .sleep-time { font-size: .9375rem; }
 
 .sum-foot { display: none; }
+/* ══════════════════════════════════════════════════════════
+   时间块压缩成两行
+   一行：时间段 · 时长 · 块名 · 角标
+   一行：小字解释（左） + 加号（右）
+   ══════════════════════════════════════════════════════════ */
+
+.blk-top {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-bottom: .1rem;
+}
+.blk-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.3;
+}
+.blk-flag { margin-left: auto; }
+
+.blk-subline {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: .1rem;
+}
+.blk-sub {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: .9375rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.blk-subline .add-btn {
+  width: 1.7rem;
+  height: 1.7rem;
+  font-size: 1.15rem;
+  flex: none;
+}
+
+/* 这两样已经被删掉了 */
+.day-head { display: block; margin: 0 0 .3rem; border: 0; padding: 0; }
+.day-head .dh-right { font-size: .9375rem; color: var(--ink-faint); }
+.day-tail, .blk-foot { display: none; }
+/* ══════════════════════════════════════════════════════════
+   专注页改版：只有 熄灯 + 倒计时 两个圆，开始/停止点一下
+   ══════════════════════════════════════════════════════════ */
+
+.f-bar { justify-content: center; gap: 1.6rem; }
+.f-bar .f-circle { flex: 0 0 auto; width: 3.2rem; max-width: none; height: 3.2rem; }
+
+/* 运行中那个按钮变成方的停止键 */
+.f-start.stopping {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+  padding-left: 0;
+  font-size: 1.6rem;
+}
+.focus.lights-off .f-start.stopping {
+  background: #1A1A1A;
+  border-color: #2A2A2A;
+  color: #5A5A5A;
+}
+/* ══════════════════════════════════════════════════════════
+   日总结改版：左边竖时间轴，右边大扇形图
+   ══════════════════════════════════════════════════════════ */
+
+.sum-main {
+  display: flex;
+  gap: .7rem;
+  align-items: stretch;
+  padding: .55rem .6rem;
+}
+
+/* ── 左边：竖时间轴 ────────────────────────────────────── */
+
+.sum-tlcol { flex: 0 0 3.4rem; }
+
+.vtl {
+  display: flex;
+  gap: .25rem;
+  height: 100%;
+  min-height: 13rem;
+}
+
+.vtl-bar {
+  position: relative;
+  flex: 1;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink-faint) 14%, transparent);
+  overflow: hidden;
+}
+.vtl-seg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 2px;
+}
+.vtl-now {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  height: 2px;
+  background: #C0392B;
+}
+.vtl-none {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg, transparent 0 5px,
+    color-mix(in srgb, var(--ink-faint) 12%, transparent) 5px 10px
+  );
+}
+
+.vtl-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: .9375rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: .05rem 0;
+}
+
+/* ── 右边：扇形图 + 图例 ───────────────────────────────── */
+
+.sum-donutcol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.sum-donutcol .donut-wrap {
+  width: min(46vw, 10.5rem);
+  margin: 0 auto .5rem;
+}
+.sum-donutcol .donut-big { font-size: 1.5rem; }
+.sum-donutcol .donut-mid { font-size: 1rem; }
+.sum-donutcol .donut-small { font-size: .9375rem; }
+
+/* 每段颜色由 JS 给，这里不写死 */
+.donut-seg { fill: none; stroke-width: 15; stroke-linecap: butt; }
+
+/* ── 睡眠只留图标 ──────────────────────────────────────── */
+
+.sleep-row { gap: .5rem; }
+.sleep-btn { padding: .45rem .4rem; gap: .05rem; }
+.sleep-icon { font-size: 1.5rem; line-height: 1.15; }
+.sleep-time { font-size: 1rem; font-variant-numeric: tabular-nums; }
+.sleep-btn .sleep-label { display: none; }
+/* ══════════════════════════════════════════════════════════
+   目标栏（日总结页）
+   没完成的在最上面，完成的沉到最底下（月亮太阳下面）
+   ══════════════════════════════════════════════════════════ */
+
+.goals-card { padding: .35rem .65rem .3rem; }
+.goals { display: flex; flex-direction: column; }
+
+.goal-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .32rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.goal-item:last-of-type { border-bottom: 0; }
+
+.goal-tick {
+  flex: none;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-top: .1rem;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--ink-faint) 55%, transparent);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--paper);
+  font-size: .9375rem;
+  font-weight: 700;
+  transition: background .16s, border-color .16s, transform .12s;
+}
+.goal-tick:active { transform: scale(.86); }
+.goal-item.done .goal-tick {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.goal-text {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 1.0625rem;      /* 17px */
+  line-height: 1.45;
+  padding: .05rem 0;
+}
+.goal-item.done .goal-text {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+.goal-item.hidden .goal-text { color: var(--ink-faint); font-size: 1rem; }
+
+.goal-date {
+  flex: none;
+  margin-top: .18rem;
+  font-size: .9375rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.goal-addline { display: flex; justify-content: flex-end; padding-top: .4rem; }
+
+.goal-add {
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  border: 1px dashed var(--accent-2);
+  background: transparent;
+  color: var(--accent);
+  font-size: 1.2rem;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: transform .12s;
+}
+.goal-add:active { transform: scale(.9); }
+
+/* 已隐藏的：折叠起来，能找回来 */
+.goals-hidden { margin: .5rem .6rem 0; }
+.goal-hidden {
+  width: 100%;
+  padding: .45rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: .9375rem;
+  color: var(--ink-faint);
+}
+.goal-hidden-list {
+  margin-top: .4rem;
+  padding: .4rem .55rem;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+.goal-restore {
+  padding: .42rem .85rem;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 1rem;
+  font-weight: 600;
+}

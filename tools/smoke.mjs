@@ -292,7 +292,10 @@ async function main() {
     times:  [...document.querySelectorAll('.blk-time')].map(e => e.textContent),
     dateMain: document.getElementById('dateMain').textContent,
     dateSub: document.getElementById('dateSub').textContent,
-    plan: document.getElementById('dhPlan').textContent,
+    hasPlanLabel: !!document.getElementById('dhPlan'),
+    hasTail: !!document.querySelector('.day-tail'),
+    titleInTop: document.querySelectorAll('.blk-top .blk-title').length,
+    addInSubline: document.querySelectorAll('.blk-subline .add-btn').length,
     theme: document.documentElement.getAttribute('data-theme'),
     err: document.getElementById('errbox').hidden ? '' : document.getElementById('errbox').textContent,
     goalNow: document.getElementById('goalNow').textContent,
@@ -304,7 +307,10 @@ async function main() {
   check('每块右下角都有实心加号', b.addBtns === 7, '实际 ' + b.addBtns);
   check('日期标题不是占位符', b.dateMain !== '—' && b.dateMain.length > 0, b.dateMain);
   check('副标题显示今天/周几', /今天|周/.test(b.dateSub), b.dateSub);
-  check('顶部显示「计划 12h」', b.plan === '计划 12h', b.plan);
+  check('「今日计划 / 计划 12h」那行已经删掉', b.hasPlanLabel === false);
+  check('最下面「到底了」那堆也删掉了', b.hasTail === false);
+  check('时间块名称和时间段在同一行', b.titleInTop === 7, String(b.titleInTop));
+  check('加号和那行小字在同一行', b.addInSubline === 7, String(b.addInSubline));
   check('默认主题是薄荷绿', b.theme === 'mint', b.theme);
   check('没有弹出错误框', b.err === '', b.err.slice(0, 200));
   check('7 个时间块标题正确',
@@ -362,7 +368,7 @@ async function main() {
   const design = JSON.parse(await cdp.eval(`JSON.stringify({
     footRight: (() => {
       const b = document.querySelector('.block[data-id="b1"] .add-btn');
-      const f = document.querySelector('.block[data-id="b1"] .blk-foot');
+      const f = document.querySelector('.block[data-id="b1"] .blk-subline');
       if (!b || !f) return false;
       const br = f.getBoundingClientRect(), bb = b.getBoundingClientRect();
       return bb.right > br.left + br.width * 0.75;
@@ -869,7 +875,7 @@ async function main() {
   })`));
 
   check('待办正文 19px（比备忘录 17pt 大）', fonts.todo === '19px', fonts.todo);
-  check('时间块标题 21px', fonts.title === '21px', fonts.title);
+  check('时间块标题 20px（压缩过）', fonts.title === '20px', fonts.title);
   check('时间刻度 16px', fonts.time === '16px', fonts.time);
   check('辅助小字 15px', fonts.sub === '15px', fonts.sub);
   check('日期标题 19px', fonts.date === '19px', fonts.date);
@@ -915,13 +921,10 @@ async function main() {
       `实际 [${nowInfo.marked}]`);
   }
 
-  /* ── 10. 专注页（新版：待办名 + 计时器 + 五个圆圈） ──── */
+  /* ── 10. 专注页（点一下开始 / 点一下停止） ──────────── */
   console.log('  ── 专注 ──');
 
-  const hold = (id, type) => `document.getElementById('${id}').dispatchEvent(new PointerEvent('${type}', {
-    pointerId: 78, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true }))`;
-
-  const swipeLeftOnDay = `(() => {
+  await cdp.eval(`(() => {
     const day = document.getElementById('day');
     const r = day.getBoundingClientRect();
     const y = r.top + 160;
@@ -934,111 +937,53 @@ async function main() {
     day.dispatchEvent(mk('pointermove', r.left + 160));
     day.dispatchEvent(mk('pointerup',   r.left + 120));
     return true;
-  })()`;
-
-  await cdp.eval(swipeLeftOnDay);
+  })()`);
   await sleep(800);
 
   const p1 = JSON.parse(await cdp.eval(`JSON.stringify({
     shown: document.getElementById('focusLayer').classList.contains('show'),
     block: document.getElementById('fBlockName').textContent,
     time:  document.getElementById('fBlockTime').textContent,
-    startVisible: !document.getElementById('fStart').hidden,
+    startText: document.getElementById('fStart').textContent,
     circles: document.querySelectorAll('#fBar .f-circle').length,
     labels: [...document.querySelectorAll('#fBar .f-circle')].map(b => b.textContent),
     hasStats: !!document.querySelector('#focusLayer .f-stat'),
-    hasHint:  !!document.querySelector('#focusLayer .f-hint'),
     hasHold:  !!document.getElementById('fHold'),
-    hasPick:  !!document.getElementById('fPick'),
-    hasRing:  !!document.getElementById('fRingFg'),
+    hasLookup: !!document.getElementById('fLookup'),
+    hasScreen: !!document.getElementById('fScreen'),
+    hasExit:   !!document.getElementById('fExit'),
+    hasPick:   !!document.getElementById('fPick'),
   })`));
 
   check('左划打开专注页', p1.shown === true, JSON.stringify(p1));
   check('最上面一行是「块名 + 时间段」',
     !!p1.block && p1.block !== '—' && /\d{2}:\d{2}[–-]\d{2}:\d{2}/.test(p1.time),
     `${p1.block} ／ ${p1.time}`);
-  check('底部正好 5 个小圆圈', p1.circles === 5, String(p1.circles));
-  check('圆圈是 🫘 📴 🌙 ⏱ ✕',
-    p1.labels.join('') === '🫘📴🌙⏱✕', JSON.stringify(p1.labels));
+  check('开始按钮写着 ▶', p1.startText === '▶', p1.startText);
+  check('底部只剩 熄灯 + 倒计时 两个圆', p1.circles === 2, String(p1.circles));
+  check('两个圆是 🌙 和 ⏱', p1.labels.join('') === '🌙⏱', JSON.stringify(p1.labels));
+  check('🫘 查题已经删掉', p1.hasLookup === false);
+  check('📴 息屏已经删掉', p1.hasScreen === false);
+  check('那个 ✕ 退出也删掉了', p1.hasExit === false);
   check('页面上没有统计格子', p1.hasStats === false);
-  check('页面上没有提示文字', p1.hasHint === false);
-  check('那个大圆环已经拿掉了', p1.hasHold === false && p1.hasRing === false);
+  check('那个大圆环也拿掉了', p1.hasHold === false);
   check('「换时间块」已经拿掉了', p1.hasPick === false);
 
-  /* 开始：按住 ▶ 1.2 秒 */
-  await cdp.eval(hold('fStart', 'pointerdown'));
-  await sleep(650);
-  check('还没按满时不算开始',
-    (await cdp.eval(`!document.getElementById('fStart').hidden`)) === true);
-  await sleep(1000);
-
+  /* 点一下开始 */
+  await cdp.eval(`document.getElementById('fStart').click()`);
+  await sleep(900);
   const running = JSON.parse(await cdp.eval(`JSON.stringify({
     running: document.getElementById('focusLayer').classList.contains('is-running'),
-    startHidden: document.getElementById('fStart').hidden,
+    btn: document.getElementById('fStart').textContent,
   })`));
-  check('按住约 1.7 秒后开始计时',
-    running.running === true && running.startHidden === true, JSON.stringify(running));
+  check('点一下就开始计时', running.running === true, JSON.stringify(running));
+  check('按钮变成 ■', running.btn === '■', running.btn);
 
   const c1 = await cdp.eval(`document.getElementById('fClock').textContent`);
   await sleep(2200);
   const c2 = await cdp.eval(`document.getElementById('fClock').textContent`);
   check('计时器在走', c1 !== c2, c1 + ' → ' + c2);
   check('计时器格式是 时:分:秒', /^\d{2}:\d{2}:\d{2}$/.test(c2), c2);
-
-  /* 🫘 查题：点了之后切页面也算专注，时间线上涂蓝 */
-  await cdp.eval(`document.getElementById('fLookup').click()`);
-  await sleep(700);
-  const lk = JSON.parse(await cdp.eval(`(async () => {
-    const m = await import('./js/store.js');
-    const list = await m.sessionsForDate(m.todayKey());
-    const s = list.find(x => !x.endedAt) || list[0] || null;
-    return JSON.stringify({
-      onBtn: document.getElementById('fLookup').classList.contains('on'),
-      open: s ? (s.marks || []).filter(x => x.kind === 'lookup' && x.to === null).length : -1,
-    });
-  })()`));
-  check('🫘 查题能打开', lk.onBtn === true, JSON.stringify(lk));
-  check('查题状态记进了会话', lk.open === 1, JSON.stringify(lk));
-
-  await cdp.eval(`document.getElementById('fLookup').click()`);
-  await sleep(600);
-  check('再点一下关闭查题',
-    (await cdp.eval(`document.getElementById('fLookup').classList.contains('on')`)) === false);
-
-  /* 📴 息屏：这段算专注（绿色）；回到页面时自动结束 */
-  await cdp.eval(`document.getElementById('fScreen').click()`);
-  await sleep(700);
-  const sc = JSON.parse(await cdp.eval(`(async () => {
-    const m = await import('./js/store.js');
-    const list = await m.sessionsForDate(m.todayKey());
-    const s = list.find(x => !x.endedAt) || list[0] || null;
-    return JSON.stringify({
-      onBtn: document.getElementById('fScreen').classList.contains('on'),
-      open: s ? (s.marks || []).filter(x => x.kind === 'screenoff' && x.to === null).length : -1,
-    });
-  })()`));
-  check('📴 息屏能打开', sc.onBtn === true, JSON.stringify(sc));
-  check('息屏状态记进了会话', sc.open === 1, JSON.stringify(sc));
-
-  /* 切走再回来 → 息屏自动结束 */
-  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
-    document.dispatchEvent(new Event('visibilitychange')); true`);
-  await sleep(1600);
-  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
-    document.dispatchEvent(new Event('visibilitychange')); true`);
-  await sleep(900);
-  const back = JSON.parse(await cdp.eval(`(async () => {
-    const m = await import('./js/store.js');
-    const list = await m.sessionsForDate(m.todayKey());
-    const s = list.find(x => !x.endedAt) || list[0] || null;
-    return JSON.stringify({
-      offBtn: document.getElementById('fScreen').classList.contains('on'),
-      open: s ? (s.marks || []).filter(x => x.kind === 'screenoff' && x.to === null).length : -1,
-      stillRunning: s ? !s.endedAt : false,
-    });
-  })()`));
-  check('回到页面后息屏状态自动结束', back.offBtn === false && back.open === 0, JSON.stringify(back));
-  check('切走期间计时没停', back.stillRunning === true, JSON.stringify(back));
 
   /* ⏱ 倒计时：5 的倍数，到点不退出专注 */
   await cdp.eval(`document.getElementById('fCd').click()`);
@@ -1069,26 +1014,28 @@ async function main() {
   check('倒计时记进了会话', cd.open === 1, JSON.stringify(cd));
   check('倒计时开始后没有退出专注', cd.running === true, JSON.stringify(cd));
 
-  /* 提前松手不算退出 */
-  await cdp.eval(hold('fExit', 'pointerdown'));
-  await sleep(3000);
-  await cdp.eval(hold('fExit', 'pointerup'));
-  await sleep(400);
-  check('长按 3 秒松手 → 不算退出（要满 15 秒）',
+  /* 切走再回来 —— 计时不停，时长不扣 */
+  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange')); true`);
+  await sleep(1600);
+  await cdp.eval(`Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange')); true`);
+  await sleep(900);
+  check('切走再回来计时没有停',
     (await cdp.eval(`document.getElementById('focusLayer').classList.contains('is-running')`)) === true);
 
-  /* 长按满 15 秒 → 弹出写一句话的对话框 */
-  await cdp.eval(hold('fExit', 'pointerdown'));
-  await sleep(15600);
+  /* 点一下 ■ 停止 → 弹出写一句话的框 */
+  await cdp.eval(`document.getElementById('fStart').click()`);
+  await sleep(1000);
   const noteState = JSON.parse(await cdp.eval(`JSON.stringify({
     noteVisible: !document.getElementById('fNote').hidden,
     noteValue: document.getElementById('fNoteText').value,
-    wordsInNote: (() => { const n = document.getElementById('fNote'); const t = n.textContent.replace(/\\s/g, ''); return t.replace(/✓/g, '').length; })(),
+    wordsInNote: (() => { const n = document.getElementById('fNote'); return n.textContent.replace(/\\s/g, '').replace(/✓/g, '').length; })(),
     barHidden: document.getElementById('fBar').hidden,
-    focused: document.activeElement && document.activeElement.id === 'fNoteText',
+    focused: !!(document.activeElement && document.activeElement.id === 'fNoteText'),
   })`));
-  check('长按满 15 秒 → 弹出写一句话的框', noteState.noteVisible === true, JSON.stringify(noteState));
-  check('这个框里一个字都没写', noteState.wordsInNote === 0, `框里有 "${noteState.wordsInNote}" 个字`);
+  check('点一下 ■ 就停止并弹出写一句话的框', noteState.noteVisible === true, JSON.stringify(noteState));
+  check('这个框里一个字都没写', noteState.wordsInNote === 0, `框里有 ${noteState.wordsInNote} 个字`);
   check('框是空的而且已经聚焦', noteState.noteValue === '' && noteState.focused === true,
     JSON.stringify(noteState));
   check('弹框时底部圆圈收起来了', noteState.barHidden === true, JSON.stringify(noteState));
@@ -1100,42 +1047,224 @@ async function main() {
     document.getElementById('fNoteOk').click();
     return true;
   })()`);
-  await sleep(1200);
+  await sleep(1400);
 
   const saved = JSON.parse(await cdp.eval(`(async () => {
     const m = await import('./js/store.js');
+    const f = await import('./js/focus.js');
     const list = await m.sessionsForDate(m.todayKey());
     const s = list[list.length - 1] || null;
+    const r = s ? f.summarize(s) : null;
     return JSON.stringify({
       n: list.length,
       ended: s ? !!s.endedAt : false,
       note: s ? s.note : null,
-      blockId: s ? s.blockId : null,
-      markKinds: s ? [...new Set((s.marks || []).map(x => x.kind))].sort() : [],
-      closedMarks: s ? (s.marks || []).every(x => x.to !== null) : false,
+      total: r ? r.totalMs : -1,
+      effective: r ? r.effectiveMs : -1,
       layerHidden: document.getElementById('focusLayer').hidden,
+      goalNow: document.getElementById('goalNow').textContent,
     });
   })()`));
+
   check('会话写进数据库并结束', saved.n >= 1 && saved.ended === true, JSON.stringify(saved));
   check('那句话存下来了', saved.note === '今天状态不错，明天继续保持', JSON.stringify(saved.note));
-  check('标记段（查题/息屏/倒计时）都存下来了',
-    saved.markKinds.includes('lookup') && saved.markKinds.includes('screenoff'),
-    JSON.stringify(saved.markKinds));
-  check('结束时标记段都收尾了', saved.closedMarks === true, JSON.stringify(saved.closedMarks));
+  check('有效时长 = 总时长（切走一律不扣）',
+    saved.effective === saved.total && saved.total > 0,
+    `有效 ${saved.effective} / 总 ${saved.total}`);
   check('写完后专注页自动收起', saved.layerHidden === true, JSON.stringify(saved));
 
-  /* 有效时长 = 总时长（熄屏/切走都不扣） */
-  const eff = JSON.parse(await cdp.eval(`(async () => {
-    const m = await import('./js/store.js');
-    const f = await import('./js/focus.js');
-    const list = await m.sessionsForDate(m.todayKey());
-    const s = list[list.length - 1];
-    const r = f.summarize(s);
-    return JSON.stringify({ total: r.totalMs, effective: r.effectiveMs, drop: r.totalMs - r.effectiveMs });
-  })()`));
-  check('有效时长 = 总时长（切走/息屏一律不扣）',
-    eff.drop === 0 && eff.effective === eff.total,
-    JSON.stringify(eff));
+  /* 最关键的一条：结束后底部要真的显示出来，不能是 0 */
+  check('结束后底部目标条显示了本次时长（不是 0）',
+    saved.goalNow !== '0h00m' && saved.goalNow !== '0s' && /[1-9]/.test(saved.goalNow),
+    `底部显示 "${saved.goalNow}"`);
+
+  /* ── 10.7 目标栏 ─────────────────────────────────────── */
+  console.log('  ── 目标栏 ──');
+
+  /* 先把日总结打开 */
+  await cdp.eval(`(() => {
+    const day = document.getElementById('day');
+    const r = day.getBoundingClientRect();
+    const y = r.top + 160;
+    const mk = (type, x) => new PointerEvent(type, {
+      pointerId: 85, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+    });
+    day.dispatchEvent(mk('pointerdown', r.left + 120));
+    day.dispatchEvent(mk('pointermove', r.left + 200));
+    day.dispatchEvent(mk('pointermove', r.left + 300));
+    day.dispatchEvent(mk('pointerup',   r.left + 360));
+    return true;
+  })()`);
+  await sleep(1200);
+
+  const g0 = JSON.parse(await cdp.eval(`JSON.stringify({
+    summaryShown: document.getElementById('summaryLayer').classList.contains('show'),
+    hasGoals: !!document.getElementById('sumGoals'),
+    hasAdd: !!document.querySelector('#sumGoals .goal-add'),
+    doneCardHidden: document.getElementById('goalsDoneCard').hidden,
+    aboveTimeline: (() => {
+      const g = document.querySelector('.goals-card');
+      const t = document.querySelector('.sum-main');
+      if (!g || !t) return false;
+      return (g.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    })(),
+  })`));
+
+  check('日总结页打开了', g0.summaryShown === true, JSON.stringify(g0));
+  check('最上面有目标栏', g0.hasGoals === true, JSON.stringify(g0));
+  check('目标栏在时间轴/扇形图上面', g0.aboveTimeline === true, JSON.stringify(g0));
+  check('目标栏有一个加号', g0.hasAdd === true, JSON.stringify(g0));
+  check('还没有完成的目标时，底下那块是收起的', g0.doneCardHidden === true, JSON.stringify(g0));
+
+  /* 加两个目标 */
+  await cdp.eval(`window.prompt = () => '考研上岸'`);
+  await cdp.eval(`document.querySelector('#sumGoals .goal-add').click()`);
+  await sleep(700);
+  await cdp.eval(`window.prompt = () => '每天背 50 个单词'`);
+  await cdp.eval(`document.querySelector('#sumGoals .goal-add').click()`);
+  await sleep(700);
+
+  const g1 = JSON.parse(await cdp.eval(`JSON.stringify({
+    items: document.querySelectorAll('#sumGoals .goal-item').length,
+    texts: [...document.querySelectorAll('#sumGoals .goal-text')].map(t => t.value),
+    ticks: document.querySelectorAll('#sumGoals .goal-tick').length,
+  })`));
+  check('加了两条目标', g1.items === 2, JSON.stringify(g1));
+  check('目标文字对',
+    g1.texts.join('|') === '考研上岸|每天背 50 个单词', JSON.stringify(g1.texts));
+  check('每条目标都有一个圆圈（待办的样子）', g1.ticks === 2, String(g1.ticks));
+
+  /* 勾掉第一条 */
+  await cdp.eval(`document.querySelector('#sumGoals .goal-tick').click()`);
+  await sleep(900);
+
+  const g2 = JSON.parse(await cdp.eval(`JSON.stringify({
+    openItems: document.querySelectorAll('#sumGoals .goal-item').length,
+    openTexts: [...document.querySelectorAll('#sumGoals .goal-text')].map(t => t.value),
+    doneCardHidden: document.getElementById('goalsDoneCard').hidden,
+    doneItems: document.querySelectorAll('#sumGoalsDone .goal-item').length,
+    doneText: (document.querySelector('#sumGoalsDone .goal-text') || {}).textContent,
+    doneDate: (document.querySelector('#sumGoalsDone .goal-date') || {}).textContent,
+    belowSleep: (() => {
+      const s = document.getElementById('sumSleep');
+      const d = document.getElementById('goalsDoneCard');
+      if (!s || !d) return false;
+      return (s.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    })(),
+  })`));
+
+  check('勾掉后从上面消失了', g2.openItems === 1, JSON.stringify(g2));
+  check('上面剩下没勾的那条', g2.openTexts[0] === '每天背 50 个单词', JSON.stringify(g2.openTexts));
+  check('底下那块展开了', g2.doneCardHidden === false, JSON.stringify(g2));
+  check('勾掉的那条沉到了底下', g2.doneItems === 1 && g2.doneText === '考研上岸', JSON.stringify(g2));
+  check('沉到底下时带了完成日期', /\d+月\d+日/.test(g2.doneDate || ''), String(g2.doneDate));
+  check('它就在月亮太阳下面', g2.belowSleep === true, JSON.stringify(g2));
+
+  /* 刷新 → 每天都看得到 */
+  await cdp.send('Page.navigate', { url: TARGET_URL });
+  await sleep(3400);
+  await cdp.eval(`(() => {
+    const day = document.getElementById('day');
+    const r = day.getBoundingClientRect();
+    const y = r.top + 160;
+    const mk = (type, x) => new PointerEvent(type, {
+      pointerId: 86, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+    });
+    day.dispatchEvent(mk('pointerdown', r.left + 120));
+    day.dispatchEvent(mk('pointermove', r.left + 200));
+    day.dispatchEvent(mk('pointermove', r.left + 300));
+    day.dispatchEvent(mk('pointerup',   r.left + 360));
+    return true;
+  })()`);
+  await sleep(1300);
+
+  const g3 = JSON.parse(await cdp.eval(`JSON.stringify({
+    openItems: document.querySelectorAll('#sumGoals .goal-item').length,
+    doneItems: document.querySelectorAll('#sumGoalsDone .goal-item').length,
+  })`));
+  check('刷新后没勾的还在', g3.openItems === 1, JSON.stringify(g3));
+  check('刷新后完成的还在底下', g3.doneItems === 1, JSON.stringify(g3));
+
+  /* 翻到别的日子，目标依然在（它是全局的） */
+  await cdp.eval(`document.getElementById('sumClose').click()`);
+  await sleep(600);
+  await cdp.eval(`document.getElementById('prevDay').click()`);
+  await sleep(1200);
+  await cdp.eval(`(() => {
+    const day = document.getElementById('day');
+    const r = day.getBoundingClientRect();
+    const y = r.top + 160;
+    const mk = (type, x) => new PointerEvent(type, {
+      pointerId: 87, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true,
+    });
+    day.dispatchEvent(mk('pointerdown', r.left + 120));
+    day.dispatchEvent(mk('pointermove', r.left + 200));
+    day.dispatchEvent(mk('pointermove', r.left + 300));
+    day.dispatchEvent(mk('pointerup',   r.left + 360));
+    return true;
+  })()`);
+  await sleep(1300);
+
+  const g4 = JSON.parse(await cdp.eval(`JSON.stringify({
+    date: document.getElementById('sumDate').textContent,
+    openItems: document.querySelectorAll('#sumGoals .goal-item').length,
+    doneItems: document.querySelectorAll('#sumGoalsDone .goal-item').length,
+  })`));
+  check('换到前一天，目标照样在（目标是全局的）',
+    g4.openItems === 1 && g4.doneItems === 1, JSON.stringify(g4));
+
+  /* 长按隐藏 */
+  await cdp.eval(`window.confirm = () => true`);
+  await cdp.eval(`(() => {
+    const row = document.querySelector('#sumGoals .goal-item');
+    if (!row) return true;
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(new PointerEvent('pointerdown', {
+      pointerId: 88, pointerType: 'touch', isPrimary: true,
+      clientX: r.left + 20, clientY: r.top + 10, bubbles: true, cancelable: true,
+    }));
+    return true;
+  })()`);
+  await sleep(1000);
+  await cdp.eval(`(() => {
+    const row = document.querySelector('#sumGoals .goal-item');
+    if (!row) return true;
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(new PointerEvent('pointerup', {
+      pointerId: 88, pointerType: 'touch', isPrimary: true,
+      clientX: r.left + 20, clientY: r.top + 10, bubbles: true, cancelable: true,
+    }));
+    return true;
+  })()`);
+  await sleep(900);
+
+  const g5 = JSON.parse(await cdp.eval(`JSON.stringify({
+    openItems: document.querySelectorAll('#sumGoals .goal-item').length,
+    hiddenBtn: (document.querySelector('#sumGoalsHidden .goal-hidden') || {}).textContent,
+  })`));
+  check('长按能把目标隐藏掉', g5.openItems === 0, JSON.stringify(g5));
+  check('隐藏后底下有「已隐藏 N 条」可以找回来',
+    /已隐藏 1 条/.test(g5.hiddenBtn || ''), String(g5.hiddenBtn));
+
+  await cdp.eval(`document.querySelector('#sumGoalsHidden .goal-hidden').click()`);
+  await sleep(600);
+  await cdp.eval(`document.querySelector('#sumGoalsHidden .goal-restore').click()`);
+  await sleep(900);
+  check('点「全部恢复」能找回来',
+    (await cdp.eval(`document.querySelectorAll('#sumGoals .goal-item').length`)) === 1);
+
+  await cdp.eval(`document.getElementById('sumClose').click()`);
+  await sleep(700);
+
+  /* 目标栏测试翻到了前一天，这里必须回到今天 ——
+     不然后面开的专注会话会记到昨天去 */
+  await cdp.eval(`document.getElementById('dateBtn').click()`);
+  await sleep(1200);
+  check('测试收尾：回到今天',
+    /今天/.test(await cdp.eval(`document.getElementById('dateSub').textContent`)));
 
   /* ── 10.5 熄灯模式 + 页面被杀掉后接着算 ──────────────── */
   console.log('  ── 熄灯 & 断点续算 ──');
@@ -1174,7 +1303,7 @@ async function main() {
     (await cdp.eval(`document.getElementById('focusLayer').classList.contains('lights-off')`)) === false);
 
   /* 开一次专注，然后直接刷新 —— 相当于 iOS 把页面回收了 */
-  await cdp.eval(hold('fStart', 'pointerdown'));
+  await cdp.eval('document.getElementById("fStart").click()');
   await sleep(1900);
   check('又开了一次专注',
     (await cdp.eval(`document.getElementById('focusLayer').classList.contains('is-running')`)) === true);

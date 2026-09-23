@@ -1,11 +1,17 @@
 ﻿/* ═══════════════════════════════════════════════════════════
    sw.js — 离线缓存
-   策略：网络优先，失败回落缓存。
-   为什么不用「缓存优先」：现在我们还在频繁改代码，缓存优先会让你
-   改了代码刷新还是旧的，很折磨人。等第 6 步定稿了再换成缓存优先提速。
+
+   策略：**先给缓存，后台偷偷更新**（stale-while-revalidate）
+
+   为什么不用「网络优先」：那样每次打开 App 都要等网络把十几个文件
+   重新下完，手机上就是**黑屏那几秒**。缓存优先是立刻出画面，
+   新版本在后台下好，下次打开就是新的。
+
+   ⚠️ 改了代码要发新版本时，把下面的 VERSION 加一。
    ═══════════════════════════════════════════════════════════ */
 
-const CACHE = 'notebook-v1';
+const VERSION = 'v3';
+const CACHE = 'notebook-' + VERSION;
 
 const SHELL = [
   './',
@@ -26,14 +32,16 @@ const SHELL = [
   './js/summary.js',
   './js/diary.js',
   './js/notes.js',
+  './js/habits.js',
   './js/schedule.js',
   './js/schedule-data.js',
   './js/sleep.js',
-  './js/habits.js',
+  './js/goals.js',
   './js/zip.js',
   './js/backup.js',
   './js/print.js',
   './icons/icon.svg',
+  './icons/icon-180.png',
 ];
 
 self.addEventListener('install', (e) => {
@@ -61,24 +69,29 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return;
 
   e.respondWith((async () => {
-    try {
-      const res = await fetch(req);
+    const cache = await caches.open(CACHE);
+    const hit = await cache.match(req);
+
+    /* 后台更新：不阻塞返回，下次打开就是新的 */
+    const fresh = fetch(req).then((res) => {
       if (res && res.status === 200 && res.type === 'basic') {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+        cache.put(req, res.clone()).catch(() => {});
       }
       return res;
-    } catch {
-      const hit = await caches.match(req);
-      if (hit) return hit;
-      if (req.mode === 'navigate') {
-        const shell = await caches.match('./index.html');
-        if (shell) return shell;
-      }
-      return new Response('离线了，而且这个文件没缓存', {
-        status: 503,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
+    }).catch(() => null);
+
+    if (hit) return hit;
+
+    const res = await fresh;
+    if (res) return res;
+
+    if (req.mode === 'navigate') {
+      const shell = await cache.match('./index.html');
+      if (shell) return shell;
     }
+    return new Response('离线了，而且这个文件没缓存', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
   })());
 });

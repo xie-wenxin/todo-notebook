@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    render.js — 把一天画出来
 
    版式（第 2 版，收紧过）：
@@ -182,28 +182,30 @@ export function blockNode(block, day, ctx) {
   if (phase === 1) flag = el('span', { class: 'blk-flag', text: '进行中' });
   else if (block.habit) flag = el('span', { class: 'blk-flag plain', text: block.habit });
 
+  /* 第一行：时间段 · 时长 · 块名 · 角标，全在一行 */
   section.appendChild(el('div', { class: 'blk-top' }, [
     el('span', { class: 'blk-time', text: `${block.start}–${block.end}` }),
     block.hours > 0 ? el('span', { class: 'blk-hours', text: `${block.hours}h` }) : null,
+    el('span', { class: 'blk-title', text: block.title }),
     flag,
   ]));
 
-  section.appendChild(el('h2', { class: 'blk-title', text: block.title }));
-  if (block.sub) section.appendChild(el('p', { class: 'blk-sub', text: block.sub }));
-
-  /* 待办清单 */
-  const ul = el('ul', { class: 'todos' });
-  for (const t of list) ul.appendChild(todoNode(t, day, block.id, ctx));
-  section.appendChild(ul);
-
-  /* 右下角：实心圆 + 加号 */
+  /* 第二行：小字解释在左，加号贴右 —— 省掉一整行的高度 */
   const addBtn = el('button', {
     class: 'add-btn',
     type: 'button',
     'aria-label': '添加待办',
     text: '+',
   });
-  section.appendChild(el('div', { class: 'blk-foot' }, [addBtn]));
+  section.appendChild(el('div', { class: 'blk-subline' }, [
+    block.sub ? el('span', { class: 'blk-sub', text: block.sub }) : el('span', { class: 'blk-sub' }),
+    addBtn,
+  ]));
+
+  /* 待办清单 */
+  const ul = el('ul', { class: 'todos' });
+  for (const t of list) ul.appendChild(todoNode(t, day, block.id, ctx));
+  section.appendChild(ul);
 
   /* 点 ⊕ 直接开一条新的并聚焦，不用先点一个假输入框 */
   addBtn.addEventListener('click', () => {
@@ -278,9 +280,14 @@ export function renderGoal(focus) {
   const ms = (focus && focus.effectiveMs) || 0;
   const hours = Math.min(ms / 3600000, TARGET_HOURS);
 
-  const hh = Math.floor(hours);
-  const mm = Math.round((hours - hh) * 60);
-  nowEl.textContent = `${hh}h${String(mm).padStart(2, '0')}m`;
+  /* 不足 1 分钟就显示秒 —— 不然刚测完 20 秒会显示 0h00m，看着像没记上 */
+  if (ms > 0 && ms < 60000) {
+    nowEl.textContent = Math.floor(ms / 1000) + 's';
+  } else {
+    const hh = Math.floor(hours);
+    const mm = Math.round((hours - hh) * 60);
+    nowEl.textContent = `${hh}h${String(mm).padStart(2, '0')}m`;
+  }
 
   const percent = TARGET_HOURS ? Math.min(100, (hours / TARGET_HOURS) * 100) : 0;
   fillEl.style.width = percent.toFixed(1) + '%';

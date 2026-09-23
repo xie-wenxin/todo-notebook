@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════════
    peek.mjs — 快速看一眼页面现在的状态（不做完整测试）
    用法：node tools/peek.mjs "表达式"
    表达式在页面里执行，返回值打印出来。省得每次都跑 4 分钟的完整测试。
@@ -16,7 +16,7 @@ const EXPR = process.env.PEEK_EXPR || process.argv[3] || 'document.querySelector
 const PORT = Number(process.env.CDP_PORT || 9444);
 const PROFILE = path.join(os.tmpdir(), 'dsh-peek-profile');
 
-fs.rmSync(PROFILE, { recursive: true, force: true });
+try { fs.rmSync(PROFILE, { recursive: true, force: true }); } catch { /* 上一轮没删干净也能继续 */ }
 
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
@@ -101,5 +101,5 @@ try {
 } finally {
   try { ws?.close(); } catch { /* 无所谓 */ }
   try { chrome.kill(); } catch { /* 无所谓 */ }
-  setTimeout(() => { fs.rmSync(PROFILE, { recursive: true, force: true }); process.exit(); }, 400);
+  setTimeout(() => { for (let i = 0; i < 5; i++) { try { fs.rmSync(PROFILE, { recursive: true, force: true }); break; } catch { /* Chrome 还占着，下次覆盖 */ } } process.exit(); }, 700);
 }

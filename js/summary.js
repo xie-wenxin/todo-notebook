@@ -1,21 +1,23 @@
 ﻿/* ═══════════════════════════════════════════════════════════
    summary.js — 日总结（右划进来）
 
-   五块内容：
-     ① 扇形图（环形）：目标 12h 填了多少，以及这几个小时分别来自哪个块
-     ② 日程：每个时间块的 计划 vs 实际专注 + 待办完成情况
-     ③ 习惯：英语 / 背单词 / 运动 / 练字 的今日打卡
-     ④ 睡眠：🌙 我睡了 / ☀️ 我醒了
-     ⑤ 全天专注时间线：一天里所有专注会话合并后铺在 6:30–23:30 上
+   版面（尽量一屏）：
+     左边  一条**竖的时间轴**，从 06:30 到 23:30，专注的时段涂上颜色
+     右边  扇形图 + 图例
+     底下  睡眠（只有 🌙 和 ☀️ 两个图标）
+
+   日程明细不在这里展开了 —— 时间轴已经能看出哪段在专注。
+   每个时间块有自己的颜色，扇形图和时间轴用同一套色，能对上号。
    ═══════════════════════════════════════════════════════════ */
 
 import {
-  TEMPLATE, TARGET_HOURS, HABITS, habitBlock, DAY_START, DAY_END,
+  TEMPLATE, TARGET_HOURS, DAY_START, DAY_END,
   toMin, todayKey, putDay, fmtMain, dowLong, sessionsForDate,
 } from './store.js';
 import { dayFocus, byBlock, fmtMs, pct } from './focus.js';
-import { el, svgEl } from './render.js';
+import { el } from './render.js';
 import { markAsleep, clearAsleep } from './sleep.js';
+import { renderGoals } from './goals.js';
 import { attachSwipe } from './gestures.js';
 
 let deps = { toast: () => {}, onChange: () => {} };
@@ -24,11 +26,15 @@ let cur = { date: null, day: null, sessions: [], focus: null, perBlock: {} };
 
 const $ = (id) => document.getElementById(id);
 
-/* ── 工具 ──────────────────────────────────────────────── */
+/* 每个时间块一个固定颜色 —— 扇形图和时间轴共用，能对上号 */
+const BLOCK_COLORS = [
+  '#3E8F71', '#3D80B4', '#B98D1B', '#B85C78',
+  '#6E5CB8', '#BE6F2E', '#2F8478', '#7C9473',
+];
 
-function dayMinutes(ts) {
-  const d = new Date(ts);
-  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+function colorOf(blockId) {
+  const i = TEMPLATE.findIndex(b => b.id === blockId);
+  return BLOCK_COLORS[(i < 0 ? 0 : i) % BLOCK_COLORS.length];
 }
 
 function hhmm(ts) {
@@ -37,18 +43,13 @@ function hhmm(ts) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function clickable(node, fn) {
-  node.addEventListener('click', fn);
-  return node;
-}
-
-/* ═══ ① 扇形图 ═══════════════════════════════════════════ */
+/* ═══ 扇形图 ═════════════════════════════════════════════ */
 
 function renderDonut() {
   const host = $('sumDonut');
   host.textContent = '';
 
-  const focus = cur.focus || { effectiveMs: 0, awayCount: 0, awayMs: 0 };
+  const focus = cur.focus || { effectiveMs: 0 };
   const per = cur.perBlock || {};
   const targetMs = TARGET_HOURS * 3600000;
 
@@ -62,44 +63,41 @@ function renderDonut() {
   const C = 2 * Math.PI * R;
   const fill = Math.min(1, focus.effectiveMs / targetMs) * C;
 
-  const svg = svgEl('svg', { viewBox: '0 0 100 100', class: 'donut' });
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('class', 'donut');
 
-  /* 底圈 = 12h 目标 */
-  svg.appendChild(svgEl('circle', {
-    class: 'donut-track', cx: 50, cy: 50, r: R,
-    'stroke-dasharray': C.toFixed(2),
-  }));
+  const track = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  track.setAttribute('class', 'donut-track');
+  track.setAttribute('cx', 50); track.setAttribute('cy', 50); track.setAttribute('r', R);
+  track.setAttribute('stroke-dasharray', C.toFixed(2));
+  svg.appendChild(track);
 
-  /* 已完成的弧，按块切成段。
-     每段长度按「块内占比 × 已填弧长」算，保证加起来正好等于已填部分。 */
   if (sumMs > 0 && fill > 0) {
-    const g = svgEl('g', { transform: 'rotate(-90 50 50)' });
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', 'rotate(-90 50 50)');
     let acc = 0;
-    entries.forEach((e, i) => {
+    for (const e of entries) {
       const len = (e.ms / sumMs) * fill;
-      const opacity = Math.max(0.34, 0.98 - i * 0.15);
-      g.appendChild(svgEl('circle', {
-        class: 'donut-seg ' + (e.block.study ? 'study' : 'other'),
-        cx: 50, cy: 50, r: R,
-        'stroke-dasharray': `${len.toFixed(3)} ${(C - len).toFixed(3)}`,
-        'stroke-dashoffset': (-acc).toFixed(3),
-        'stroke-opacity': opacity.toFixed(2),
-      }));
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('class', 'donut-seg');
+      c.setAttribute('cx', 50); c.setAttribute('cy', 50); c.setAttribute('r', R);
+      c.setAttribute('stroke', colorOf(e.block.id));
+      c.setAttribute('stroke-dasharray', `${len.toFixed(3)} ${(C - len).toFixed(3)}`);
+      c.setAttribute('stroke-dashoffset', (-acc).toFixed(3));
+      g.appendChild(c);
       acc += len;
-    });
+    }
     svg.appendChild(g);
   }
 
   const wrap = el('div', { class: 'donut-wrap' }, [svg]);
-
-  /* 圆心文字用 HTML 叠上去，配色自动跟着主题走 */
   const ratio = focus.effectiveMs / targetMs;
   wrap.appendChild(el('div', { class: 'donut-center' }, [
     el('div', { class: 'donut-big', text: fmtMs(focus.effectiveMs) }),
-    el('div', { class: 'donut-mid', text: pct(ratio) + ' / ' + TARGET_HOURS + 'h' }),
-    el('div', { class: 'donut-small', text: '有效专注' }),
+    el('div', { class: 'donut-mid', text: pct(ratio) }),
+    el('div', { class: 'donut-small', text: `/ ${TARGET_HOURS}h` }),
   ]));
-
   host.appendChild(wrap);
 
   /* 图例 */
@@ -107,276 +105,133 @@ function renderDonut() {
   legend.textContent = '';
 
   if (!entries.length) {
-    legend.appendChild(el('p', {
-      class: 'sum-empty',
-      text: cur.date === todayKey()
-        ? '今天还没开始专注。左划进专注，开始第一段。'
-        : '这天没有专注记录。',
-    }));
+    legend.appendChild(el('p', { class: 'sum-empty', text: '还没有专注记录' }));
     return;
   }
 
   for (const e of entries) {
     legend.appendChild(el('div', { class: 'legend-row' }, [
-      el('span', {
-        class: 'legend-dot ' + (e.block.study ? 'study' : 'other'),
-      }),
+      el('i', { class: 'legend-dot', style: `background:${colorOf(e.block.id)};` }),
       el('span', { class: 'legend-name', text: e.block.title }),
       el('span', { class: 'legend-val', text: fmtMs(e.ms) }),
     ]));
   }
-
-  if (focus.awayCount) {
-    legend.appendChild(el('p', {
-      class: 'sum-note',
-      text: `另：离开 ${focus.awayCount} 次，共 ${fmtMs(focus.awayMs)}（短于 2 分钟的不扣有效时长）`,
-    }));
-  }
 }
 
-/* ═══ ② 日程 ═════════════════════════════════════════════ */
+/* ═══ 竖时间轴（靠左） ═══════════════════════════════════ */
 
-function renderBlocks() {
-  const host = $('sumBlocks');
-  host.textContent = '';
-  const per = cur.perBlock || {};
-  const day = cur.day;
-
-  for (const b of TEMPLATE) {
-    const got = (per[b.id] && per[b.id].effectiveMs) || 0;
-    const planMs = b.hours * 3600000;
-    const list = (day.todos && day.todos[b.id]) || [];
-    const doneN = list.filter(t => t.done).length;
-
-    const row = el('div', { class: 'sum-block' });
-
-    row.appendChild(el('div', { class: 'sum-block-top' }, [
-      el('span', { class: 'sum-block-time', text: `${b.start}–${b.end}` }),
-      el('span', { class: 'sum-block-name', text: b.title }),
-      b.study
-        ? el('span', {
-          class: 'sum-block-got' + (got >= planMs ? ' full' : ''),
-          text: `${fmtMs(got)} / ${b.hours}h`,
-        })
-        : el('span', { class: 'sum-block-got muted', text: got > 0 ? fmtMs(got) : '不计入' }),
-    ]));
-
-    if (b.study) {
-      const w = planMs ? Math.min(100, (got / planMs) * 100) : 0;
-      const bar = el('div', { class: 'sum-bar' }, [
-        el('i', { style: `width:${w.toFixed(1)}%;` }),
-      ]);
-      if (got >= planMs) bar.classList.add('full');
-      row.appendChild(bar);
-    }
-
-    const bits = [];
-    if (list.length) bits.push(`待办 ${doneN}/${list.length}`);
-    if (b.habit) bits.push((day.habits && day.habits[b.habit]) ? `习惯 ${b.habit} ✅` : `习惯 ${b.habit} 未打卡`);
-    if (got === 0 && !list.length && !b.habit) bits.push('无记录');
-
-    if (bits.length) {
-      row.appendChild(el('div', { class: 'sum-block-sub', text: bits.join(' · ') }));
-    }
-
-    host.appendChild(row);
-  }
-}
-
-/* ═══ ③ 习惯 ═════════════════════════════════════════════ */
-
-function renderHabits() {
-  const host = $('sumHabits');
-  host.textContent = '';
-
-  if (!HABITS.length) {
-    host.appendChild(el('p', { class: 'sum-empty', text: '模板里还没有标记习惯项。' }));
-    return;
-  }
-
-  for (const name of HABITS) {
-    const on = !!(cur.day.habits && cur.day.habits[name]);
-    const b = habitBlock(name);
-    const chip = el('button', {
-      type: 'button',
-      class: 'habit' + (on ? ' on' : ''),
-      'data-habit': name,
-    }, [
-      el('span', { class: 'habit-tick', text: on ? '✓' : '' }),
-      el('span', { class: 'habit-name', text: name }),
-      b ? el('span', { class: 'habit-time', text: `${b.start}–${b.end}` }) : null,
-    ]);
-
-    chip.addEventListener('click', async () => {
-      if (!cur.day.habits) cur.day.habits = {};
-      cur.day.habits[name] = !cur.day.habits[name];
-      await putDay(cur.day);
-      deps.onChange();
-    });
-
-    host.appendChild(chip);
-  }
-
-  const doneN = HABITS.filter(n => cur.day.habits && cur.day.habits[n]).length;
-  host.appendChild(el('p', {
-    class: 'sum-note',
-    text: `今天打卡 ${doneN}/${HABITS.length}`,
-  }));
-}
-
-/* ═══ ④ 睡眠 ═════════════════════════════════════════════ */
-
-function renderSleep() {
-  const host = $('sumSleep');
-  host.textContent = '';
-  const day = cur.day;
-
-  const sleepBtn = el('button', {
-    type: 'button',
-    class: 'sleep-btn' + (day.sleepAt ? ' on' : ''),
-  }, [
-    el('span', { class: 'sleep-icon', text: '🌙' }),
-    el('span', { class: 'sleep-label', text: '我睡了' }),
-    el('span', { class: 'sleep-time', text: day.sleepAt ? hhmm(day.sleepAt) : '' }),
-  ]);
-
-  const wakeBtn = el('button', {
-    type: 'button',
-    class: 'sleep-btn' + (day.wakeAt ? ' on' : ''),
-  }, [
-    el('span', { class: 'sleep-icon', text: '☀️' }),
-    el('span', { class: 'sleep-label', text: '我醒了' }),
-    el('span', { class: 'sleep-time', text: day.wakeAt ? hhmm(day.wakeAt) : '' }),
-  ]);
-
-  sleepBtn.addEventListener('click', async () => {
-    if (day.sleepAt) {
-      await clearAsleep(day);
-      renderSleep();
-      return;
-    }
-    await markAsleep(day);
-    renderSleep();
-    deps.toast('晚安');
-  });
-
-  wakeBtn.addEventListener('click', async () => {
-    day.wakeAt = day.wakeAt ? null : Date.now();
-    await putDay(day);
-    renderSleep();
-    deps.toast(day.wakeAt ? `记下了：${hhmm(day.wakeAt)} 醒了` : '已清除起床时间');
-  });
-
-  host.append(sleepBtn, wakeBtn);
-
-  /* 两个都有了才算睡眠时长 */
-  let text = '';
-  if (day.sleepAt && day.wakeAt) {
-    let ms = day.wakeAt - day.sleepAt;
-    if (ms < 0) ms += 24 * 3600000;     /* 跨了午夜 */
-    const h = Math.floor(ms / 3600000);
-    const m = Math.round((ms % 3600000) / 60000);
-    text = `昨晚睡了 ${h} 小时 ${m} 分`;
-    if (h < 7) text += ` · 比目标 7h 少 ${7 * 60 - (h * 60 + m)} 分钟`;
-    else text += ' · 达标 ✅';
-  } else if (day.sleepAt) {
-    text = '';
-  }
-
-  host.appendChild(el('p', { class: 'sum-note', text }));
-}
-
-/* ═══ ⑤ 全天专注时间线 ═══════════════════════════════════ */
-
-function renderDayTimeline() {
+function renderVTimeline() {
   const host = $('sumTimeline');
   host.textContent = '';
 
   const startMin = toMin(DAY_START);
   const endMin = toMin(DAY_END);
   const span = endMin - startMin;
-  const W = 1000, H = 30;
 
+  const bar = el('div', { class: 'vtl-bar' });
   const segs = (cur.focus && cur.focus.segments) || [];
+  const per = cur.perBlock || {};
+
+  /* 先画整天的底 */
   if (!segs.length) {
-    host.appendChild(el('p', { class: 'sum-empty', text: '这天没有专注时段。' }));
-    return;
+    bar.appendChild(el('span', { class: 'vtl-none' }));
   }
 
-  const toX = (ts) => {
-    const m = dayMinutes(ts);
-    return Math.max(0, Math.min(W, ((m - startMin) / span) * W));
+  /* 每个块的专注段按块上色 */
+  for (const b of TEMPLATE) {
+    const list = (per[b.id] && per[b.id].segments) || [];
+    for (const s of list) {
+      const from = new Date(s.from);
+      const to = new Date(s.to);
+      const f = from.getHours() * 60 + from.getMinutes() + from.getSeconds() / 60;
+      const t = to.getHours() * 60 + to.getMinutes() + to.getSeconds() / 60;
+      const top = ((f - startMin) / span) * 100;
+      const h = Math.max(0.6, ((t - f) / span) * 100);
+      bar.appendChild(el('span', {
+        class: 'vtl-seg',
+        style: `top:${top.toFixed(2)}%;height:${h.toFixed(2)}%;background:${colorOf(b.id)};`,
+      }));
+    }
+  }
+
+  /* 「现在」那条线（只看今天） */
+  if (cur.date === todayKey()) {
+    const n = new Date();
+    const m = n.getHours() * 60 + n.getMinutes();
+    if (m >= startMin && m <= endMin) {
+      bar.appendChild(el('span', {
+        class: 'vtl-now',
+        style: `top:${(((m - startMin) / span) * 100).toFixed(2)}%;`,
+      }));
+    }
+  }
+
+  const hours = [];
+  for (let m = startMin; m <= endMin; m += 180) {
+    hours.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  }
+
+  const labels = el('div', { class: 'vtl-labels' });
+  for (const t of hours) labels.appendChild(el('span', { text: t }));
+
+  host.appendChild(el('div', { class: 'vtl' }, [bar, labels]));
+}
+
+/* ═══ 睡眠（只有月亮和太阳） ════════════════════════════ */
+
+function renderSleep() {
+  const host = $('sumSleep');
+  host.textContent = '';
+  const day = cur.day;
+
+  const mk = (icon, ts, onTap) => {
+    const b = el('button', { type: 'button', class: 'sleep-btn' + (ts ? ' on' : '') }, [
+      el('span', { class: 'sleep-icon', text: icon }),
+      el('span', { class: 'sleep-time', text: hhmm(ts) }),
+    ]);
+    b.addEventListener('click', onTap);
+    return b;
   };
 
-  const svg = svgEl('svg', {
-    viewBox: `0 0 ${W} ${H}`,
-    preserveAspectRatio: 'none',
-    class: 'day-tl',
+  const sleepBtn = mk('🌙', day.sleepAt, async () => {
+    if (day.sleepAt) { await clearAsleep(day); renderSleep(); return; }
+    await markAsleep(day);
+    renderSleep();
+    deps.toast('晚安');
   });
 
-  /* 背景刻度：每 3 小时一条淡线 */
-  for (let m = startMin; m <= endMin; m += 180) {
-    const x = ((m - startMin) / span) * W;
-    svg.appendChild(svgEl('line', {
-      x1: x.toFixed(1), y1: 0, x2: x.toFixed(1), y2: H,
-      class: 'day-tl-tick',
+  const wakeBtn = mk('☀️', day.wakeAt, async () => {
+    day.wakeAt = day.wakeAt ? null : Date.now();
+    await putDay(day);
+    renderSleep();
+  });
+
+  host.append(sleepBtn, wakeBtn);
+
+  if (day.sleepAt && day.wakeAt) {
+    let ms = day.wakeAt - day.sleepAt;
+    if (ms < 0) ms += 24 * 3600000;
+    host.appendChild(el('p', {
+      class: 'sum-note',
+      text: `${Math.floor(ms / 3600000)}h${String(Math.round((ms % 3600000) / 60000)).padStart(2, '0')}m`,
     }));
   }
-
-  for (const s of segs) {
-    const x1 = toX(s.from);
-    /* 给一个最小宽度：不然很短的会话（几秒钟）会被压成 0 像素凭空消失。
-       宁可画成一根细线，也不能让记录看不见。 */
-    const w = Math.max(2.5, toX(s.to) - x1);
-    const x = Math.min(x1, W - w);
-    svg.appendChild(svgEl('rect', {
-      x: x.toFixed(1), y: 4,
-      width: w.toFixed(1), height: H - 8,
-      rx: 3,
-      class: 'day-tl-focus',
-    }));
-  }
-
-  /* 今天的话标一条「现在」 */
-  if (cur.date === todayKey()) {
-    const x = toX(Date.now());
-    svg.appendChild(svgEl('line', {
-      x1: x.toFixed(1), y1: 0, x2: x.toFixed(1), y2: H,
-      class: 'day-tl-now',
-    }));
-  }
-
-  host.appendChild(svg);
-
-  const axis = el('div', { class: 'day-tl-axis' });
-  for (let m = startMin; m <= endMin; m += 180) {
-    const d = new Date();
-    d.setHours(Math.floor(m / 60), m % 60, 0, 0);
-    axis.appendChild(el('span', { text: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }));
-  }
-  host.appendChild(axis);
 }
 
 /* ═══ 装配 ═══════════════════════════════════════════════ */
 
 function renderAll() {
-  const d = cur.date;
-  $('sumDate').textContent = `${fmtMain(d)} · ${dowLong(d)}`;
-  $('sumTitle').textContent = d === todayKey() ? '今日总结' : '这天的小结';
+  $('sumDate').textContent = `${fmtMain(cur.date)} · ${dowLong(cur.date)}`;
   renderDonut();
-  renderBlocks();
+  renderVTimeline();
   renderSleep();
-  renderDayTimeline();
+  renderGoals(deps);
 }
 
 export async function openSummary(date, day) {
   cur.date = date;
   cur.day = day;
-  cur.sessions = await sessionsForDate(date);
-  const clean = cur.sessions.map(s => ({ ...s, away: s.away || [] }));
-  cur.focus = dayFocus(clean);
-  cur.perBlock = byBlock(clean);
-  renderAll();
+  await refreshSummary();
   showLayer();
 }
 
@@ -385,7 +240,7 @@ export async function refreshSummary() {
   cur.sessions = await sessionsForDate(cur.date);
   const clean = cur.sessions.map(s => ({ ...s, away: s.away || [] }));
   cur.focus = dayFocus(clean);
-  cur.perBlock = byBlock(clean);
+  cur.perBlock = byBlock(clean, { withSegments: true });
   renderAll();
 }
 
@@ -413,10 +268,8 @@ export function initSummary(options = {}) {
   wired = true;
 
   $('sumClose').addEventListener('click', closeSummary);
-
-  /* 右划关掉（和进来是同一个手势方向，顺手） */
   attachSwipe($('summaryLayer'), {
-    onRight: () => closeSummary(),
-    onLeft: () => closeSummary(),
+    onRight: closeSummary,
+    onLeft: closeSummary,
   });
 }

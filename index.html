@@ -12,6 +12,15 @@
 <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icons/icon-180.png">
 <link rel="manifest" href="./manifest.webmanifest">
+<!-- 冷启动第一帧：先在 <head> 里把背景铺上，免得白/黑闪一下 -->
+<style>
+  html, body { margin: 0; background: #E9F6EF; }
+  #boot {
+    position: fixed; inset: 0; background: #E9F6EF;
+    transition: opacity .18s;
+  }
+  #boot.gone { opacity: 0; pointer-events: none; }
+</style>
 <link rel="stylesheet" href="./css/theme.css">
 <link rel="stylesheet" href="./css/base.css">
 <link rel="stylesheet" href="./css/print.css">
@@ -36,13 +45,8 @@
 
     <!-- ── 正文：时间块 ─────────────────────────────── -->
     <main class="day" id="day">
-      <div class="day-head">
-        <div class="dh-left">
-          <span class="dh-label">今日计划</span>
-          <span class="dh-plan" id="dhPlan">—</span>
-        </div>
-        <div class="dh-right" id="dhRight"></div>
-      </div>
+      <div class="day-head"><span class="dh-right" id="dhRight"></span></div>
+
 
       <section class="blocks" id="blocks"></section>
 
@@ -50,10 +54,7 @@
 
       <section class="diary" id="diary"></section>
 
-      <div class="day-tail">
-        <div class="tail-mark">— 到底了 —</div>
-        <div class="tail-hint" id="tailHint">左划进入专注 · 右划看总结</div>
-      </div>
+
     </main>
 
     <!-- ── 底部状态条 ───────────────────────────────── -->
@@ -163,11 +164,8 @@
 
     <!-- ③ 底部五个小圆圈 -->
     <div class="f-bar" id="fBar">
-      <button class="f-circle" id="fLookup" type="button" aria-label="查题">🫘</button>
-      <button class="f-circle" id="fScreen" type="button" aria-label="息屏">📴</button>
       <button class="f-circle" id="fLights" type="button" aria-label="熄灯">🌙</button>
       <button class="f-circle" id="fCd" type="button" aria-label="倒计时">⏱</button>
-      <button class="f-circle exit" id="fExit" type="button" aria-label="退出">✕</button>
     </div>
 
     <div class="f-picker" id="fCdPicker" hidden></div>
@@ -195,21 +193,27 @@
       <span class="sum-head-pad"></span>
     </header>
 
-    <section class="sum-card">
-      <div id="sumDonut"></div>
-      <div class="donut-legend" id="sumLegend"></div>
-      <div class="day-timeline" id="sumTimeline"></div>
+    <section class="sum-card goals-card">
+      <div class="goals" id="sumGoals"></div>
+    </section>
+
+    <section class="sum-card sum-main">
+      <div class="sum-tlcol"><div id="sumTimeline"></div></div>
+      <div class="sum-donutcol">
+        <div id="sumDonut"></div>
+        <div class="donut-legend" id="sumLegend"></div>
+      </div>
     </section>
 
     <section class="sum-card">
-      <h3 class="sum-h">日程</h3>
-      <div class="sum-blocks" id="sumBlocks"></div>
-    </section>
-
-    <section class="sum-card">
-      <h3 class="sum-h">睡眠</h3>
       <div class="sleep-row" id="sumSleep"></div>
     </section>
+
+    <section class="sum-card" id="goalsDoneCard" hidden>
+      <div class="goals done" id="sumGoalsDone"></div>
+    </section>
+
+    <div class="goals-hidden" id="sumGoalsHidden"></div>
 
 
     <p class="sum-foot">右划或点 ✕ 收起</p>
