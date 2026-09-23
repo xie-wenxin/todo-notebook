@@ -2315,3 +2315,119 @@ button {
   font-size: 1rem;
   font-weight: 600;
 }
+/* ══════════════════════════════════════════════════════════
+   第三次改版：时间块一行到底 · 课程字号小一档 · 日总结放大
+   同权重后写的赢，所以这里整段覆盖前面的尺寸。
+   ══════════════════════════════════════════════════════════ */
+
+/* ── 时间块：名称（左）· 简写时间（右）· 加号（最右） ──── */
+
+.block {
+  padding: .62rem 0 .3rem 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.blk-top {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  margin-bottom: .05rem;
+}
+.blk-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.25rem;        /* 20px */
+  font-weight: 700;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blk-time {
+  flex: none;
+  font-size: .9375rem;       /* 15px */
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+.blk-top .add-btn {
+  flex: none;
+  width: 1.7rem;
+  height: 1.7rem;
+  font-size: 1.15rem;
+}
+
+/* 这几样都不要了 */
+.blk-subline, .blk-hours, .blk-flag, .blk-sub, .blk-foot { display: none !important; }
+
+/* ── 课程待办：字号小一档，左边色条区分 ─────────────────── */
+
+.todo.from-course .todo-input {
+  font-size: 1.0625rem;      /* 17px，比普通待办小一档 */
+  color: var(--ink-soft);
+}
+.todo.from-course .tick {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* ── 日总结：圆圈放大、时间轴加长 ──────────────────────── */
+
+.sum-main {
+  padding: .5rem .55rem;
+  gap: .5rem;
+}
+.sum-tlcol { flex: 0 0 2.9rem; }
+.vtl { min-height: 19rem; }
+.vtl-labels { font-size: .9375rem; }
+
+.sum-donutcol .donut-wrap {
+  width: min(64vw, 15rem);
+  margin: 0 auto .6rem;
+}
+.sum-donutcol .donut-big { font-size: 1.75rem; }
+.sum-donutcol .donut-mid { font-size: 1.0625rem; }
+.sum-donutcol .donut-small { font-size: .9375rem; }
+.donut-track, .donut-seg { stroke-width: 13; }
+
+/* ── 睡眠：两个小圆圈并排，不占地方 ────────────────────── */
+
+.sleep-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .1rem 0;
+}
+
+.sleep-btn {
+  flex: none;
+  width: 3.6rem;
+  height: 3.6rem;
+  border-radius: 50%;
+  padding: 0;
+  gap: .02rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+.sleep-btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sleep-icon { font-size: 1.25rem; line-height: 1; }
+.sleep-time {
+  font-size: .9375rem;       /* 15px，全站下限 */
+  line-height: 1.1;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.sleep-btn.on .sleep-time { color: var(--paper); }
+
+.sleep-row .sum-note {
+  flex: 1;
+  margin: 0;
+  text-align: left;
+}

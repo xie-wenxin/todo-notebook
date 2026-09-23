@@ -49,6 +49,15 @@ export function svgEl(tag, props = {}) {
  * 用 textarea 而不是 input：input 是单行的，待办写长一点就不聚焦时被截断。
  * textarea + 自动长高 = 短的还是一行，长的自己撑开。
  */
+/** 8:00-12:00 → 8-12；6:30 → 6:30。半小时保留，整点去 :00 */
+export function shortRange(s, e) {
+  const sh = (t) => {
+    const [h, m] = t.split(':').map(Number);
+    return m === 0 ? String(h) : `${h}:${m}`;
+  };
+  return `${sh(s)}-${sh(e)}`;
+}
+
 export function autoGrow(ta, minRows = 1) {
   if (!ta) return;
   ta.style.height = 'auto';
@@ -77,7 +86,7 @@ function makeInput(props) {
 
 function todoNode(todo, day, blockId, ctx) {
   const li = el('li', {
-    class: 'todo' + (todo.done ? ' done' : ''),
+    class: 'todo' + (todo.done ? ' done' : '') + (todo.from === 'course' ? ' from-course' : ''),
     'data-id': todo.id,
   });
 
@@ -177,28 +186,18 @@ export function blockNode(block, day, ctx) {
     'data-habit': block.habit ? '1' : '0',
   });
 
-  /* 第一行：时间 · 时长 · 角标 */
-  let flag = null;
-  if (phase === 1) flag = el('span', { class: 'blk-flag', text: '进行中' });
-  else if (block.habit) flag = el('span', { class: 'blk-flag plain', text: block.habit });
-
-  /* 第一行：时间段 · 时长 · 块名 · 角标，全在一行 */
-  section.appendChild(el('div', { class: 'blk-top' }, [
-    el('span', { class: 'blk-time', text: `${block.start}–${block.end}` }),
-    block.hours > 0 ? el('span', { class: 'blk-hours', text: `${block.hours}h` }) : null,
-    el('span', { class: 'blk-title', text: block.title }),
-    flag,
-  ]));
-
-  /* 第二行：小字解释在左，加号贴右 —— 省掉一整行的高度 */
+  /* 一行搞定：块名（左） · 简写时间段（右） · 加号（最右）。
+     不解释、不写时长、不写角标 —— 简洁，自己看得懂。 */
   const addBtn = el('button', {
     class: 'add-btn',
     type: 'button',
     'aria-label': '添加待办',
     text: '+',
   });
-  section.appendChild(el('div', { class: 'blk-subline' }, [
-    block.sub ? el('span', { class: 'blk-sub', text: block.sub }) : el('span', { class: 'blk-sub' }),
+
+  section.appendChild(el('div', { class: 'blk-top' }, [
+    el('span', { class: 'blk-title', text: block.title }),
+    el('span', { class: 'blk-time', text: shortRange(block.start, block.end) }),
     addBtn,
   ]));
 

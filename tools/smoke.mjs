@@ -295,7 +295,8 @@ async function main() {
     hasPlanLabel: !!document.getElementById('dhPlan'),
     hasTail: !!document.querySelector('.day-tail'),
     titleInTop: document.querySelectorAll('.blk-top .blk-title').length,
-    addInSubline: document.querySelectorAll('.blk-subline .add-btn').length,
+    addInTopRow: document.querySelectorAll('.blk-top .add-btn').length,
+    subGone: document.querySelectorAll('.blk-sub, .blk-subline').length,
     theme: document.documentElement.getAttribute('data-theme'),
     err: document.getElementById('errbox').hidden ? '' : document.getElementById('errbox').textContent,
     goalNow: document.getElementById('goalNow').textContent,
@@ -310,14 +311,15 @@ async function main() {
   check('「今日计划 / 计划 12h」那行已经删掉', b.hasPlanLabel === false);
   check('最下面「到底了」那堆也删掉了', b.hasTail === false);
   check('时间块名称和时间段在同一行', b.titleInTop === 7, String(b.titleInTop));
-  check('加号和那行小字在同一行', b.addInSubline === 7, String(b.addInSubline));
+  check('加号在块名那一行的最右边', b.addInTopRow === 7, String(b.addInTopRow));
+  check('时间块下面的解释文字全删了', b.subGone === 0, String(b.subGone));
   check('默认主题是薄荷绿', b.theme === 'mint', b.theme);
   check('没有弹出错误框', b.err === '', b.err.slice(0, 200));
   check('7 个时间块标题正确',
     b.titles.join('|') === '英语|专业课 / 考研|午间|专业课 / 考研|杂事|运动|晚间',
     b.titles.join('|'));
-  check('时间刻度正确',
-    b.times[0] === '06:30–08:00' && b.times[6] === '20:00–23:00',
+  check('时间段简写正确（6:30-8 / 8-12 / 20-23）',
+    b.times[0] === '6:30-8' && b.times[1] === '8-12' && b.times[6] === '20-23',
     b.times.join('|'));
 
   /* ── 1.5 课表预填 ────────────────────────────────────── */
@@ -368,7 +370,7 @@ async function main() {
   const design = JSON.parse(await cdp.eval(`JSON.stringify({
     footRight: (() => {
       const b = document.querySelector('.block[data-id="b1"] .add-btn');
-      const f = document.querySelector('.block[data-id="b1"] .blk-subline');
+      const f = document.querySelector('.block[data-id="b1"] .blk-top');
       if (!b || !f) return false;
       const br = f.getBoundingClientRect(), bb = b.getBoundingClientRect();
       return bb.right > br.left + br.width * 0.75;
@@ -379,7 +381,7 @@ async function main() {
     blockBorderTop: parseFloat(getComputedStyle(document.querySelector('.block[data-id="b2"]')).borderTopWidth),
     oldAddRow: document.querySelectorAll('.todo.add-row').length,
   })`));
-  check('加号在右下角', design.footRight === true, JSON.stringify(design));
+  check('加号在块名那一行的最右边', design.footRight === true, JSON.stringify(design));
   check('加号内容是 +', design.addBtnText === '+', String(design.addBtnText));
   check('加号是实心圆', parseFloat(design.addBtnRadius) > 10, design.addBtnRadius);
   check('时间块不再是圆角厚方框', design.blockRadius === '0px', design.blockRadius);
@@ -866,18 +868,19 @@ async function main() {
   await sleep(600);
 
   const fonts = JSON.parse(await cdp.eval(`JSON.stringify({
-    todo:   getComputedStyle(document.querySelector('.todo-input')).fontSize,
+    todo:   getComputedStyle(document.querySelector('.todo:not(.from-course) .todo-input')).fontSize,
     title:  getComputedStyle(document.querySelector('.blk-title')).fontSize,
     time:   getComputedStyle(document.querySelector('.blk-time')).fontSize,
-    sub:    getComputedStyle(document.querySelector('.blk-sub')).fontSize,
+    course: document.querySelector('.todo.from-course .todo-input') ? getComputedStyle(document.querySelector('.todo.from-course .todo-input')).fontSize : 'none',
     date:   getComputedStyle(document.getElementById('dateMain')).fontSize,
     smallest: ${SMALLEST},
   })`));
 
   check('待办正文 19px（比备忘录 17pt 大）', fonts.todo === '19px', fonts.todo);
   check('时间块标题 20px（压缩过）', fonts.title === '20px', fonts.title);
-  check('时间刻度 16px', fonts.time === '16px', fonts.time);
-  check('辅助小字 15px', fonts.sub === '15px', fonts.sub);
+
+  check('课程待办字号 17px（比普通待办小一档）', fonts.course === '17px', fonts.course);
+  check('时间刻度 15px', fonts.time === '15px', fonts.time);
   check('日期标题 19px', fonts.date === '19px', fonts.date);
   check('全页没有任何小于 15px 的字', parseFloat(fonts.smallest) >= 15, fonts.smallest);
 
@@ -900,12 +903,12 @@ async function main() {
   console.log('  ── 当前时间块高亮 ──');
   const nowInfo = JSON.parse(await cdp.eval(`JSON.stringify((() => {
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-    const toM = (h) => { const [a, b] = h.split(':').map(Number); return a * 60 + b; };
+    const toM = (h) => { const p = h.split(':'); return Number(p[0]) * 60 + (p[1] ? Number(p[1]) : 0); };
     const blocks = [...document.querySelectorAll('.block')];
     let expected = null;
     for (const b of blocks) {
       const t = b.querySelector('.blk-time').textContent;
-      const [s, e] = t.split('–').map(x => x.trim());
+      const [s, e] = t.split('-').map(x => x.trim());
       if (nowMin >= toM(s) && nowMin < toM(e)) { expected = b.dataset.id; break; }
     }
     const marked = blocks.filter(b => b.classList.contains('is-now')).map(b => b.dataset.id);
