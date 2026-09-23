@@ -498,11 +498,34 @@ async function boot() {
   /* 要一份持久化存储，免得 iOS 空间紧张时清掉数据 */
   requestPersistence();
 
-  /* 离线缓存（本地预览时注册不注册都行，https 下必须有） */
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
+  /* ── Service Worker ──────────────────────────────────────
+     只在 https 上注册（就是手机上真正用的时候）。
+     本地预览（localhost）不注册，而且主动清理已经注册过的 ——
+     不然改了代码刷新还看到旧的，白折腾半天。 */
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
+  if ('serviceWorker' in navigator) {
+    if (isLocal) {
+      navigator.serviceWorker.getRegistrations()
+        .then(rs => rs.forEach(r => r.unregister()))
+        .catch(() => {});
+      if (window.caches) {
+        caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {});
+      }
+    } else if (location.protocol === 'https:') {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+
+      /* 新版本接管时自动刷新一次 —— 不然手机上要手动刷两遍才看到新版 */
+      let hadController = !!navigator.serviceWorker.controller;
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) { hadController = true; return; }
+        if (reloading) return;
+        reloading = true;
+        location.reload();
+      });
+    }
+  }
   /* ③ 点了「我睡了」之后又回来 —— 自动记「我醒了」 */
   try {
     if (await checkWake()) toast('早安', 2400);

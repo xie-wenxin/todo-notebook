@@ -10,7 +10,7 @@
    ⚠️ 改了代码要发新版本时，把下面的 VERSION 加一。
    ═══════════════════════════════════════════════════════════ */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'notebook-' + VERSION;
 
 const SHELL = [
