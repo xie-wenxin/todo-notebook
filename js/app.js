@@ -1,11 +1,11 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    app.js — 主程序：开局、切天、自动翻页、面板开关
    ═══════════════════════════════════════════════════════════ */
 
 import { openDB, requestPersistence, fmtBytes } from './db.js';
 import {
   loadSettings, saveSettings, getDay, putDay, blankDay, todayKey, addDays,
-  fmtMain, fmtSub, dayProgress, sessionsForDate,
+  fmtMain, fmtSub, dayProgress, sessionsForDate, APP_BUILD,
 } from './store.js';
 import { applyTheme, themeForDay, renderSwatches } from './theme.js';
 import { renderDay, renderHead, renderGoal, scrollToNow } from './render.js';
@@ -16,7 +16,7 @@ import {
   renderHabitTable, buildWeekHead,
 } from './daystrip.js';
 import { attachSwipe } from './gestures.js';
-import { dayFocus } from './focus.js';
+import { dayFocus, fmtDur } from './focus.js';
 import {
   initFocus, openFocus, isFocusOpen, isFocusRunning, resumeIfAny,
 } from './focus-ui.js';
@@ -189,6 +189,93 @@ function closeSheet() {
   }, 300);
 }
 
+/** 小本子 → 备份 底下那两行：一眼看出「今天到底记上没有」 */
+async function renderDiag() {
+  const el = $('appVer');
+  const dl = $('diagLine');
+  if (el) el.textContent = '版本 ' + APP_BUILD + ' · 2026-09-24';
+  if (!dl) return;
+
+  try {
+    const list = await sessionsForDate(currentDate);
+    const f = dayFocus(list.map(s => ({ ...s, away: s.away || [] })));
+
+    const hm = (ms) => {
+      const d = new Date(ms);
+      return String(d.getHours()).padStart(2, '0') + ':' +
+             String(d.getMinutes()).padStart(2, '0');
+    };
+    const lastAt = list.map(s => s.endedAt || s.startedAt).sort((a, b) => b - a)[0];
+
+    const bits = [];
+    if (list.some(s => !s.endedAt)) bits.push('⏱ 正在计时中');
+    bits.push(`${currentDate === todayKey() ? '今天' : currentDate}专注 ${fmtDur(f.effectiveMs)}`);
+    bits.push(list.length ? `${list.length} 次` : '还没记过');
+    if (lastAt) bits.push(`最后一次 ${hm(lastAt)}`);
+    dl.textContent = bits.join(' · ');
+  } catch (e) {
+    dl.textContent = '读记录出错：' + (e.message || e);
+  }
+}
+/* ── 版本自检 / 强制更新 ───────────────────────────────────
+   手机上最常见的一种「改了没反应」：Service Worker 还在喂旧文件。
+   三层防线：
+     ① 注册时 updateViaCache:'none'，明确不走 HTTP 缓存
+     ② 每次打开都问一句当前 SW 是哪个版本，对不上就清干净重来
+     ③ 备份页留一个「强制更新」按钮，实在不行点它
+   ─────────────────────────────────────────────────────── */
+
+async function wipeCaches() {
+  try {
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => caches.delete(k)));
+  } catch { /* 无所谓 */ }
+}
+
+async function unregisterAll() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const rs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(rs.map(r => r.unregister()));
+  } catch { /* 无所谓 */ }
+}
+
+/** 问当前接管页面的 SW 是哪个版本，对不上就清干净重来 */
+function checkSwVersion() {
+  const ctrl = navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (!ctrl) return;
+  try {
+    const ch = new MessageChannel();
+    const t = setTimeout(() => { try { ch.port1.close(); } catch { /* 无所谓 */ } }, 4000);
+    ch.port1.onmessage = (ev) => {
+      clearTimeout(t);
+      const v = ev.data && ev.data.version;
+      if (v && v !== APP_BUILD) hardReset();
+    };
+    ctrl.postMessage({ type: 'version' }, [ch.port2]);
+  } catch { /* 问不到就算了 */ }
+}
+
+/** 清干净再重载。只自动做一次，免得来回循环。 */
+async function hardReset() {
+  try {
+    if (sessionStorage.getItem('nb-reset')) return;
+    sessionStorage.setItem('nb-reset', '1');
+  } catch { /* 没有 sessionStorage 也照做 */ }
+  await unregisterAll();
+  await wipeCaches();
+  location.reload();
+}
+
+/** 备份页那个按钮：不管三七二十一，清干净重生 */
+async function forceUpdate() {
+  try { sessionStorage.removeItem('nb-reset'); } catch { /* 无所谓 */ }
+  unregisterAll();
+  wipeCaches();
+  toast('正在清缓存重载…', 1600);
+  setTimeout(() => location.reload(), 500);
+}
+
 /* ── 小本子：周历 / 习惯 / 备份 ─────────────────────────── */
 
 let stripMode = 'todo';      // 'todo' | 'focus'
@@ -281,6 +368,7 @@ function wire() {
     if (!btn) return;
     bookTab = btn.dataset.tab;
     markBookTab();
+    if (bookTab === 'io') renderDiag();
   });
 
   /* 周历滑到底 → 继续补后面的历史（一年 52 周一次全画会卡） */
@@ -367,6 +455,11 @@ function wire() {
     await sleep(60);
     try { await printMonth(currentDate); } catch (e) { toast('排版失败：' + (e.message || e), 4000); }
   });
+
+  /* 强制更新：清掉 Service Worker 和缓存再重载。
+     手机上万一卡在旧版本，按这个就好。 */
+  const fub = $('forceUpdateBtn');
+  if (fub) fub.addEventListener('click', () => forceUpdate());
 
   $('scrim').addEventListener('click', closeSheet);
 
@@ -506,14 +599,14 @@ async function boot() {
 
   if ('serviceWorker' in navigator) {
     if (isLocal) {
-      navigator.serviceWorker.getRegistrations()
-        .then(rs => rs.forEach(r => r.unregister()))
-        .catch(() => {});
-      if (window.caches) {
-        caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {});
-      }
+      unregisterAll();
+      wipeCaches();
     } else if (location.protocol === 'https:') {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      /* updateViaCache:'none' —— 明确不许拿 HTTP 缓存里的旧 sw.js。
+         少了这一句，改了版本号手机上可能半天看不到。 */
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+        .then((reg) => { reg.update().catch(() => {}); })
+        .catch(() => {});
 
       /* 新版本接管时自动刷新一次 —— 不然手机上要手动刷两遍才看到新版 */
       let hadController = !!navigator.serviceWorker.controller;
@@ -524,6 +617,9 @@ async function boot() {
         reloading = true;
         location.reload();
       });
+
+      /* 每打开一次就问一句：现在喂我文件的 SW 是哪个版本？对不上就清干净重来 */
+      checkSwVersion();
     }
   }
   /* ③ 点了「我睡了」之后又回来 —— 自动记「我醒了」 */

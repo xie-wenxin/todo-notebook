@@ -51,6 +51,14 @@ export const TARGET_HOURS = TEMPLATE.reduce((s, b) => s + b.hours, 0); // = 12
 export const DAY_START = '06:30';
 export const DAY_END = '23:30';
 
+/**
+ * 当前构建版本号。改了代码要发新版时，**这里和 sw.js 的 VERSION 一起改**。
+ * 页面上会显示出来（总结页底部 + 小本子→备份），用来一眼确认
+ * 「手机上跑的是不是我刚传上去的那一版」。这两个字符串必须一致，
+ * 对不上时 app.js 会清缓存重载。
+ */
+export const APP_BUILD = 'v7';
+
 /** 从模板自动抽出的初始习惯 —— 只在第一次初始化时用一次，之后就以数据为准 */
 export const DEFAULT_HABITS = [...new Set(TEMPLATE.map(b => b.habit).filter(Boolean))];
 
@@ -318,12 +326,8 @@ export function blockPhase(block, d = new Date()) {
   return 1;
 }
 
-export function fmtDuration(ms) {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  return `${h}h${String(m).padStart(2, '0')}m`;
-}
+/* 时长的格式化统一在 focus.js 的 fmtDur() —— 别在这里另起一份，
+   同一个格式算两遍，就会出现「一处显示 13s、另一处显示 0h00m」。 */
 
 /* ── 一天的完成情况（给九日小本子用） ──────────────────── */
 

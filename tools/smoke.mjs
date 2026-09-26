@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    smoke.mjs — 端到端冒烟测试
    用 Chrome DevTools Protocol 真的把页面打开、真的点、真的刷新，
    验证渲染、持久化、手势外的交互是不是都对。
@@ -349,11 +349,37 @@ async function main() {
 
   check('算得出今天是第几周', sched.week >= 1, `第 ${sched.week} 周`);
   check('按课表把今天的课填成了待办',
-    sched.seeded === sched.expect && sched.expect > 0,
+    sched.seeded === sched.expect,
     `填了 ${sched.seeded}，课表说今天 ${sched.expect} 节`);
+
+  /* 今天可能正好是周末（课表里本来就没课），所以另找一个**肯定有课**的日子
+     直接验 seedCourses —— 不然一到周六日跑测试就红。 */
+  const schedDay = JSON.parse(await cdp.eval(`(async () => {
+    const st = await import('./js/store.js');
+    const sch = await import('./js/schedule.js');
+    let t = st.todayKey();
+    for (let i = 0; i < 14 && sch.coursesOn(t).length === 0; i++) t = st.addDays(t, 1);
+
+    const day = await st.getDay(t);
+    await sch.seedCourses(day);      /* 只在内存里排，不存库，免得污染后面的测试 */
+    const list = ['b2', 'b4', 'b6'].flatMap(k => (day.todos && day.todos[k]) || [])
+      .filter(x => x.from === 'course');
+    return JSON.stringify({
+      date: t,
+      expect: sch.coursesOn(t).length,
+      seeded: list.length,
+      texts: list.map(x => x.text),
+      expectTexts: sch.coursesOn(t).map(c => sch.courseText(c)),
+    });
+  })()`));
+
+  check('课表里确实存在能排课的日子', schedDay.expect > 0,
+    schedDay.date + ' 有 ' + schedDay.expect + ' 节');
+  check('那天照课表填成了待办', schedDay.seeded === schedDay.expect,
+    `填了 ${schedDay.seeded}，课表说 ${schedDay.expect} 节`);
   check('课的文字和课表一致',
-    JSON.stringify(sched.texts) === JSON.stringify(sched.expectTexts),
-    JSON.stringify(sched.texts));
+    JSON.stringify(schedDay.texts) === JSON.stringify(schedDay.expectTexts),
+    JSON.stringify(schedDay.texts));
   check('课只落在上午(b2)和下午(b4)块里',
     sched.blocks.every(x => x === 'b2' || x === 'b4' || x === 'b6'),
     JSON.stringify(sched.blocks));
@@ -839,7 +865,7 @@ async function main() {
     btns: document.querySelectorAll('#tabIo .io-btn').length,
   })`));
   check('能切到备份页', ioTab.visible === true, JSON.stringify(ioTab));
-  check('备份页有 4 个按钮', ioTab.btns === 4, String(ioTab.btns));
+  check('备份页有 5 个按钮（含强制更新）', ioTab.btns === 5, String(ioTab.btns));
 
   await cdp.eval(`document.querySelector('#bookTabs button[data-tab="weeks"]').click()`);
   await sleep(700);
@@ -867,14 +893,46 @@ async function main() {
   });
   await sleep(600);
 
-  const fonts = JSON.parse(await cdp.eval(`JSON.stringify({
-    todo:   getComputedStyle(document.querySelector('.todo:not(.from-course) .todo-input')).fontSize,
-    title:  getComputedStyle(document.querySelector('.blk-title')).fontSize,
-    time:   getComputedStyle(document.querySelector('.blk-time')).fontSize,
-    course: document.querySelector('.todo.from-course .todo-input') ? getComputedStyle(document.querySelector('.todo.from-course .todo-input')).fontSize : 'none',
-    date:   getComputedStyle(document.getElementById('dateMain')).fontSize,
-    smallest: ${SMALLEST},
-  })`));
+  /* 通用字号就在今天读（今天不一定有课，但一定有普通待办） */
+  const fonts = JSON.parse(await cdp.eval(`(() => {
+    const cs = (sel) => {
+      const n = document.querySelector(sel);
+      return n ? getComputedStyle(n).fontSize : 'none';
+    };
+    return JSON.stringify({
+      todo:  cs('.todo:not(.from-course) .todo-input'),
+      title: cs('.blk-title'),
+      time:  cs('.blk-time'),
+      date:  cs('#dateMain'),
+      smallest: ${SMALLEST},
+    });
+  })()`));
+
+  /* 课程待办的字号得翻到**有课的那天**才量得到。
+     今天要是周末（课表没课），就往右翻几天 —— 不然周六日跑测试就红。 */
+  const dateLabelBefore = await cdp.eval(`document.getElementById('dateMain').textContent`);
+  let moved = 0;
+  let courseFont = 'none';
+  for (let i = 0; i < 7; i++) {
+    courseFont = await cdp.eval(`(() => {
+      const n = document.querySelector('.todo.from-course .todo-input');
+      return n ? getComputedStyle(n).fontSize : 'none';
+    })()`);
+    if (courseFont !== 'none') break;
+    await cdp.eval(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))`);
+    await sleep(1100);
+    moved++;
+  }
+  for (let i = 0; i < moved; i++) {
+    await cdp.eval(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))`);
+    await sleep(1100);
+  }
+  if (moved) {
+    const dateLabelAfter = await cdp.eval(`document.getElementById('dateMain').textContent`);
+    check('翻去找课之后又翻回今天了', dateLabelAfter === dateLabelBefore,
+      dateLabelBefore + ' → ' + dateLabelAfter);
+  }
+  fonts.course = courseFont;
 
   check('待办正文 19px（比备忘录 17pt 大）', fonts.todo === '19px', fonts.todo);
   check('时间块标题 20px（压缩过）', fonts.title === '20px', fonts.title);
@@ -1333,6 +1391,130 @@ async function main() {
   })()`);
   check('数据库里现在有 2 条会话', twoSessions === 2, '实际 ' + twoSessions);
 
+  /* ── 10.9 黑屏 / 换软件也得算上（这条是最要命的） ────── */
+  console.log('  ── 黑屏 / 换软件也算时间 ──');
+
+  const lockE2E = JSON.parse(await cdp.eval(`(async () => {
+    const store = await import('./js/store.js');
+    const F = await import('./js/focus.js');
+    const sum = await import('./js/summary.js');
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const today = store.todayKey();
+    const MIN = 60000;
+
+    /* 先把还在跑的那个会话正经停掉 —— 让它一直涨会干扰下面的断言，
+       顺便再走一遍「点停止 → 写一句话 → 记下」的流程 */
+    if (document.getElementById('focusLayer').classList.contains('is-running')) {
+      document.getElementById('fStart').click();
+      await wait(500);
+      document.getElementById('fNoteText').value = '冒烟测试';
+      document.getElementById('fNoteOk').click();
+      await wait(1400);
+    }
+
+    const msOf = async () => {
+      const list = await store.sessionsForDate(today);
+      return F.dayFocus(list.map(x => ({ ...x, away: x.away || [] }))).effectiveMs;
+    };
+
+    const beforeMs = await msOf();
+    const barBefore = document.getElementById('goalNow').textContent;
+
+    /* 91 分钟前点开始，1 分钟后黑屏失联（iOS 没给 visibilitychange），
+       直到刚刚才回来点停止。失联的那 89 分钟以前会被整段扣光。 */
+    const now = Date.now();
+    const s = F.createSession({
+      id: 'lock-' + now, date: today, blockId: 'b2',
+      label: '专业课', startedAt: now - 91 * MIN,
+    });
+    s.lastTick = now - 90 * MIN;
+    F.addUnknown(s, 89 * MIN);
+    F.endSession(s, now);
+    await store.putSession(F.toRecord(s));
+
+    /* 等价于「从别的 App 切回来」 */
+    document.dispatchEvent(new Event('visibilitychange'));
+    await wait(1000);
+
+    const barAfter = document.getElementById('goalNow').textContent;
+    const afterMs = await msOf();
+
+    const day = await store.getDay(today);
+    await sum.openSummary(today, day);
+    await wait(700);
+    const donut = document.querySelector('.donut-big');
+    const segs = document.querySelectorAll('.vtl-seg').length;
+    const items = document.querySelectorAll('.sum-sleep .sleep-btn, .sleep-btn').length;
+    sum.closeSummary();
+
+    return JSON.stringify({
+      barBefore, barAfter,
+      donut: donut ? donut.textContent : '',
+      segs, items,
+      unknown: s.unknownMs,
+      deltaMin: Math.round((afterMs - beforeMs) / MIN),
+    });
+  })()`));
+
+  check('黑屏失联的 89 分钟照实记成 unknownMs',
+    lockE2E.unknown === 89 * 60000, String(lockE2E.unknown));
+  check('失联那段一分不扣：正好多出 91 分钟',
+    lockE2E.deltaMin === 91, '实际多出 ' + lockE2E.deltaMin + ' 分钟');
+  check('底部那行真的涨了', lockE2E.barAfter !== lockE2E.barBefore,
+    lockE2E.barBefore + ' → ' + lockE2E.barAfter);
+  check('底部那行不是 0h00m', !/^0h0?0m$/.test(lockE2E.barAfter), lockE2E.barAfter);
+  check('扇形图跟底部那行一致',
+    lockE2E.donut === lockE2E.barAfter, lockE2E.donut + ' vs ' + lockE2E.barAfter);
+  check('时间轴上有整整一段', lockE2E.segs >= 1, String(lockE2E.segs));
+
+  /* ── 10.92 孤儿会话：两条没结束的计时器绝不能叠着算 ──── */
+  const orphanE2E = JSON.parse(await cdp.eval(`(async () => {
+    const store = await import('./js/store.js');
+    const F = await import('./js/focus.js');
+    const ui = await import('./js/focus-ui.js');
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const today = store.todayKey();
+    const now = Date.now();
+    const MIN = 60000;
+
+    /* 故意塞两条没结束的会话 —— 正常不会出现，出现了就是别的地方出过错 */
+    const a = F.createSession({ id: 'orph-a', date: today, blockId: 'b2', startedAt: now - 60 * MIN });
+    a.lastTick = now - 50 * MIN;
+    const b = F.createSession({ id: 'orph-b', date: today, blockId: 'b4', startedAt: now - 30 * MIN });
+    b.lastTick = now - 20 * MIN;
+    await store.putSession(F.toRecord(a));
+    await store.putSession(F.toRecord(b));
+
+    const before = (await store.allSessions()).filter(s => !s.endedAt).length;
+    await ui.resumeIfAny();
+    const all = await store.allSessions();
+    const A = all.find(s => s.id === 'orph-a');
+
+    const out = {
+      before,
+      runningAfter: all.filter(s => !s.endedAt).map(s => s.id).join(','),
+      closedAOffBy: A && A.endedAt ? Math.round(Math.abs(A.endedAt - (now - 50 * MIN)) / 1000) : -1,
+    };
+
+    /* 收尾：把这个会话正经停掉，别影响后面的备份测试 */
+    if (document.getElementById('focusLayer').classList.contains('is-running')) {
+      document.getElementById('fStart').click();
+      await wait(500);
+      document.getElementById('fNoteText').value = '孤儿测试';
+      document.getElementById('fNoteOk').click();
+      await wait(1400);
+    }
+    out.leftRunning = (await store.allSessions()).filter(s => !s.endedAt).length;
+
+    return JSON.stringify(out);
+  })()`));
+
+  check('确实塞进去两条没结束的会话', orphanE2E.before === 2, String(orphanE2E.before));
+  check('重开后只接最近那一条', orphanE2E.runningAfter === 'orph-b', orphanE2E.runningAfter);
+  check('多余的那条收敛在它最后一次活着的时刻',
+    orphanE2E.closedAOffBy === 0, '差了 ' + orphanE2E.closedAOffBy + ' 秒');
+  check('收尾之后一条在跑的都不剩', orphanE2E.leftRunning === 0, String(orphanE2E.leftRunning));
+
   /* ── 10.95 备份导入往返（会清库，所以放最后） ────────── */
   console.log('  ── 备份导入 ──');
 
@@ -1447,7 +1629,12 @@ main()
     if (cdp) cdp.close();
     try { chrome.kill(); } catch {}
     setTimeout(() => {
-      fs.rmSync(PROFILE, { recursive: true, force: true });
+      /* 临时目录删不掉不算测试失败 —— Chrome 有时还占着句柄。
+         以前这里会抛 EPERM 把退出码搞成 1，看着像测试挂了，其实全过了。 */
+      for (let i = 0; i < 5; i++) {
+        try { fs.rmSync(PROFILE, { recursive: true, force: true }); break; }
+        catch { /* 下轮再试 */ }
+      }
       process.exit(fail ? 1 : 0);
     }, 400);
   });

@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    summary.js — 日总结（右划进来）
 
    版面（尽量一屏）：
@@ -12,9 +12,9 @@
 
 import {
   TEMPLATE, TARGET_HOURS, DAY_START, DAY_END,
-  toMin, todayKey, putDay, fmtMain, dowLong, sessionsForDate,
+  toMin, todayKey, putDay, fmtMain, dowLong, sessionsForDate, APP_BUILD,
 } from './store.js';
-import { dayFocus, byBlock, fmtMs, pct } from './focus.js';
+import { dayFocus, byBlock, fmtDur, pct } from './focus.js';
 import { el } from './render.js';
 import { markAsleep, clearAsleep } from './sleep.js';
 import { renderGoals } from './goals.js';
@@ -37,6 +37,9 @@ function colorOf(blockId) {
   return BLOCK_COLORS[(i < 0 ? 0 : i) % BLOCK_COLORS.length];
 }
 
+/* 没归到任何时间块的那些时长，用灰色画 */
+const UNASSIGNED_COLOR = '#9AA6A0';
+
 function hhmm(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -57,6 +60,16 @@ function renderDonut() {
     .map(b => ({ block: b, ms: (per[b.id] && per[b.id].effectiveMs) || 0 }))
     .filter(e => e.ms > 0)
     .sort((a, b) => b.ms - a.ms);
+
+  /* 有会话没归到任何时间块（blockId 为空）时，也要画进圈里。
+     不然会出现「中间大字写着 1h31m，圈上却空空的、图例还说没有记录」——
+     又是一次「明明记上了却看不见」。 */
+  const totalMs = focus.effectiveMs || 0;
+  const blockedMs = entries.reduce((s, e) => s + e.ms, 0);
+  const unassignedMs = Math.max(0, totalMs - blockedMs);
+  if (unassignedMs > 0) {
+    entries.push({ block: { id: '__none__', title: '未分块' }, ms: unassignedMs, color: UNASSIGNED_COLOR });
+  }
 
   const sumMs = entries.reduce((s, e) => s + e.ms, 0);
   const R = 38;
@@ -82,7 +95,7 @@ function renderDonut() {
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       c.setAttribute('class', 'donut-seg');
       c.setAttribute('cx', 50); c.setAttribute('cy', 50); c.setAttribute('r', R);
-      c.setAttribute('stroke', colorOf(e.block.id));
+      c.setAttribute('stroke', e.color || colorOf(e.block.id));
       c.setAttribute('stroke-dasharray', `${len.toFixed(3)} ${(C - len).toFixed(3)}`);
       c.setAttribute('stroke-dashoffset', (-acc).toFixed(3));
       g.appendChild(c);
@@ -94,7 +107,7 @@ function renderDonut() {
   const wrap = el('div', { class: 'donut-wrap' }, [svg]);
   const ratio = focus.effectiveMs / targetMs;
   wrap.appendChild(el('div', { class: 'donut-center' }, [
-    el('div', { class: 'donut-big', text: fmtMs(focus.effectiveMs) }),
+    el('div', { class: 'donut-big', text: fmtDur(focus.effectiveMs) }),
     el('div', { class: 'donut-mid', text: pct(ratio) }),
     el('div', { class: 'donut-small', text: `/ ${TARGET_HOURS}h` }),
   ]));
@@ -111,9 +124,9 @@ function renderDonut() {
 
   for (const e of entries) {
     legend.appendChild(el('div', { class: 'legend-row' }, [
-      el('i', { class: 'legend-dot', style: `background:${colorOf(e.block.id)};` }),
+      el('i', { class: 'legend-dot', style: `background:${e.color || colorOf(e.block.id)};` }),
       el('span', { class: 'legend-name', text: e.block.title }),
-      el('span', { class: 'legend-val', text: fmtMs(e.ms) }),
+      el('span', { class: 'legend-val', text: fmtDur(e.ms) }),
     ]));
   }
 }
@@ -144,9 +157,17 @@ function renderVTimeline() {
       const from = new Date(s.from);
       const to = new Date(s.to);
       const f = from.getHours() * 60 + from.getMinutes() + from.getSeconds() / 60;
-      const t = to.getHours() * 60 + to.getMinutes() + to.getSeconds() / 60;
-      const top = ((f - startMin) / span) * 100;
-      const h = Math.max(0.6, ((t - f) / span) * 100);
+      const tRaw = to.getHours() * 60 + to.getMinutes() + to.getSeconds() / 60;
+
+      /* 夹进「今天」这个时间窗里再画。
+         跨午夜的会话算出来的 t 会比 f 还小，不处理就会变成一段
+         负高度、几乎看不见的线 —— 那也是「明明记上了却看不到」。*/
+      const f2 = Math.min(Math.max(f, startMin), endMin);
+      const t2 = Math.min(tRaw <= f ? endMin : tRaw, endMin);
+      if (t2 <= f2) continue;
+
+      const top = ((f2 - startMin) / span) * 100;
+      const h = Math.max(0.8, ((t2 - f2) / span) * 100);
       bar.appendChild(el('span', {
         class: 'vtl-seg',
         style: `top:${top.toFixed(2)}%;height:${h.toFixed(2)}%;background:${colorOf(b.id)};`,
@@ -226,6 +247,9 @@ function renderAll() {
   renderVTimeline();
   renderSleep();
   renderGoals(deps);
+  /* 版本号放在最底下 —— 出问题时一眼就能看出手机上跑的是哪一版 */
+  const foot = $('sumFoot');
+  if (foot) foot.textContent = `右划或点 ✕ 收起 · ${APP_BUILD}`;
 }
 
 export async function openSummary(date, day) {

@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    render.js — 把一天画出来
 
    版式（第 2 版，收紧过）：
@@ -12,6 +12,7 @@ import {
   TEMPLATE, TARGET_HOURS, blockPhase, dayProgress,
   putDay, newId,
 } from './store.js';
+import { fmtDur } from './focus.js';
 import { attachSwipe } from './gestures.js';
 
 /* ── DOM 小工具 ────────────────────────────────────────── */
@@ -279,14 +280,10 @@ export function renderGoal(focus) {
   const ms = (focus && focus.effectiveMs) || 0;
   const hours = Math.min(ms / 3600000, TARGET_HOURS);
 
-  /* 不足 1 分钟就显示秒 —— 不然刚测完 20 秒会显示 0h00m，看着像没记上 */
-  if (ms > 0 && ms < 60000) {
-    nowEl.textContent = Math.floor(ms / 1000) + 's';
-  } else {
-    const hh = Math.floor(hours);
-    const mm = Math.round((hours - hh) * 60);
-    nowEl.textContent = `${hh}h${String(mm).padStart(2, '0')}m`;
-  }
+  /* 一律走 fmtDur：不足一分钟显示秒。
+     以前这里自己算 h/m，59 分 50 秒会算出「0h60m」，而且不到 1 分钟
+     全是 0h00m —— 计时器明明在走，看着却像没记上。 */
+  nowEl.textContent = fmtDur(ms);
 
   const percent = TARGET_HOURS ? Math.min(100, (hours / TARGET_HOURS) * 100) : 0;
   fillEl.style.width = percent.toFixed(1) + '%';

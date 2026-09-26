@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    print.js — 导出 PDF
 
    做法：把要打印的内容拼成一个隐藏的 DOM（#printRoot），
@@ -12,7 +12,7 @@ import {
   TEMPLATE, HABITS, TARGET_HOURS,
   getDay, sessionsForDate, fmtMain, dowLong, addDays, fromKey, dateKey,
 } from './store.js';
-import { dayFocus, byBlock, fmtMs, pct } from './focus.js';
+import { dayFocus, byBlock, fmtMs, fmtDur, pct } from './focus.js';
 import { el, svgEl } from './render.js';
 import { photoURL } from './diary.js';
 
@@ -49,7 +49,7 @@ async function buildDayPage(date) {
   const hours = focus.effectiveMs / 3600000;
   page.appendChild(el('div', { class: 'pr-big' }, [
     el('div', { class: 'pr-big-main' }, [
-      el('b', { text: fmtMs(focus.effectiveMs) }),
+      el('b', { text: fmtDur(focus.effectiveMs) }),
       el('span', { text: ` / ${TARGET_HOURS}h　${pct(hours / TARGET_HOURS)}` }),
     ]),
     el('div', { class: 'pr-big-sub', text:
@@ -100,8 +100,8 @@ async function buildDayPage(date) {
       el('span', { class: 'pr-block-time', text: `${b.start}–${b.end}` }),
       el('strong', { class: 'pr-block-name', text: b.title }),
       b.study
-        ? el('span', { class: 'pr-block-got', text: `${fmtMs(got)} / ${b.hours}h` })
-        : el('span', { class: 'pr-block-got muted', text: got > 0 ? fmtMs(got) : '—' }),
+        ? el('span', { class: 'pr-block-got', text: `${fmtDur(got)} / ${b.hours}h` })
+        : el('span', { class: 'pr-block-got muted', text: got > 0 ? fmtDur(got) : '—' }),
     ]));
 
     if (b.habit) {

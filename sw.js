@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    sw.js — 离线缓存
 
    策略：**先给缓存，后台偷偷更新**（stale-while-revalidate）
@@ -10,7 +10,7 @@
    ⚠️ 改了代码要发新版本时，把下面的 VERSION 加一。
    ═══════════════════════════════════════════════════════════ */
 
-const VERSION = 'v4';
+const VERSION = 'v7';
 const CACHE = 'notebook-' + VERSION;
 
 const SHELL = [
@@ -56,9 +56,33 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    const stale = keys.filter(k => k !== CACHE);
+    /* 有旧缓存 → 这次是「更新」，不是第一次安装 */
+    const isUpdate = stale.length > 0;
+
+    await Promise.all(stale.map(k => caches.delete(k)));
     await self.clients.claim();
+
+    /* 更新完让开着的页面重载一次。
+       不然会出现「新 index.html + 旧 app.js」这种半新半旧的状态，
+       一堆莫名其妙的毛病（改了没反应、点了没动静）都是这么来的。
+       第一次安装不重载，免得白闪一下。 */
+    if (isUpdate) {
+      try {
+        const all = await self.clients.matchAll({ type: 'window' });
+        for (const c of all) { try { c.navigate(c.url); } catch { /* 无所谓 */ } }
+      } catch { /* 无所谓 */ }
+    }
   })());
+});
+
+/* ── 页面可以来问「你是哪个版本」 ─────────────────────────
+   页面拿到版本号一比对，就知道自己是不是被旧缓存喂着。
+   ─────────────────────────────────────────────────────── */
+self.addEventListener('message', (e) => {
+  const port = e.ports && e.ports[0];
+  if (!port) return;
+  port.postMessage({ version: VERSION });
 });
 
 self.addEventListener('fetch', (e) => {

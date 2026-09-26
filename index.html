@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN" data-theme="mint">
 <head>
 <meta charset="utf-8">
@@ -141,6 +141,9 @@
       导出的文件存到「文件」App 里最稳 —— 浏览器里的数据说没就没。
     </p>
     <input type="file" id="importFile" accept=".zip,application/zip" class="file-hidden">
+    <button type="button" id="forceUpdateBtn" class="io-btn ghost">强制更新（卡在旧版时点）</button>
+    <p class="sheet-note tight" id="appVer"></p>
+    <p class="sheet-note tight" id="diagLine"></p>
   </div>
 </div>
 
@@ -216,7 +219,7 @@
     <div class="goals-hidden" id="sumGoalsHidden"></div>
 
 
-    <p class="sum-foot">右划或点 ✕ 收起</p>
+    <p class="sum-foot" id="sumFoot">右划或点 ✕ 收起</p>
   </div>
 </div>
 

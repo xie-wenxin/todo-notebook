@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
    base.css — 本子的骨骼和皮肤
    字号体系（全部 rem，改 --fs 就整体放大缩小）：
      基准 1rem = 16px × --fs
@@ -1530,6 +1530,16 @@ button {
   color: var(--paper);
 }
 .io-btn:disabled { opacity: .5; pointer-events: none; }
+
+/* 强制更新：单独一个全宽按钮，不跟上面的导出按钮挤在格子里 */
+#forceUpdateBtn {
+  display: block;
+  width: 100%;
+  margin: .7rem 0 .2rem;
+  font-size: .94rem;
+  font-weight: 500;
+  opacity: .78;
+}
 
 .matrix-grid {
   display: grid;

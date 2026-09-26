@@ -12,7 +12,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 import {
-  TEMPLATE, blockPhase, todayKey, findRunningSession, putSession, newId,
+  TEMPLATE, blockPhase, todayKey, allSessions, putSession, newId,
 } from './store.js';
 import * as F from './focus.js';
 import { el } from './render.js';
@@ -33,6 +33,7 @@ let tickHandle = null;
 let tickCount = 0;
 let lastPersist = 0;
 let lightsOff = false;
+let busy = false;            // 防止连点两下 ▶ 造出两条会话
 
 let cdEndAt = null;
 let cdDone = false;
@@ -105,34 +106,65 @@ async function persist() {
   await putSession(F.toRecord(session));
 }
 
+/**
+ * 库里有没有「没结束、但不是当前这条」的会话？
+ * 正常不会有。真出现了就说明上一步出过错 —— 两条计时器叠着算，
+ * 时长会凭空变多，比少算还糟。所以开新的之前先把它们收掉。
+ */
+async function closeOrphans(keepId = null) {
+  try {
+    const all = await allSessions();
+    for (const rec of all) {
+      if (rec.endedAt || rec.id === keepId) continue;
+      const o = F.fromRecord(rec);
+      F.endSession(o, o.lastTick || o.startedAt);
+      await putSession(F.toRecord(o));
+    }
+  } catch { /* 收不掉也不拦着开始计时 */ }
+}
+
 async function startSession() {
-  const block = currentBlock();
-  session = F.createSession({
-    id: 's' + newId(),
-    date: deps.getDate(),
-    blockId: block ? block.id : null,
-    todoId: pickedTodoId,
-    label: pickedLabel || (block ? block.title : '专注'),
-    startedAt: Date.now(),
-  });
-  state = 'running';
-  lastPersist = Date.now();
-  await persist();
-  startTick();
-  render();
+  if (busy) return;
+  busy = true;
+  try {
+    await closeOrphans();
+
+    const block = currentBlock();
+    session = F.createSession({
+      id: 's' + newId(),
+      date: deps.getDate(),
+      blockId: block ? block.id : null,
+      todoId: pickedTodoId,
+      label: pickedLabel || (block ? block.title : '专注'),
+      startedAt: Date.now(),
+    });
+    state = 'running';
+    lastPersist = Date.now();
+    await persist();
+    startTick();
+    render();
+  } finally {
+    busy = false;
+  }
 }
 
 /** 点一下停止 —— 会话立刻结束，然后强制写一句话 */
 async function stopSession() {
+  if (busy) return;
   if (!session || session.endedAt) return;
-  F.endSession(session, Date.now());
-  stopTick();
-  await persist();
-  state = 'note';
-  render();
-  const ta = $('fNoteText');
-  ta.value = '';
-  setTimeout(() => ta.focus(), 140);
+  busy = true;
+  try {
+    F.endSession(session, Date.now());
+    stopTick();
+    await persist();
+    state = 'note';
+    render();
+    const ta = $('fNoteText');
+    ta.value = '';
+    setTimeout(() => ta.focus(), 140);
+  } finally {
+    busy = false;
+  }
 }
 
 async function finishWithNote() {
@@ -142,7 +174,7 @@ async function finishWithNote() {
   state = 'done';
   render();
   deps.onChange();
-  deps.toast('记下了 · ' + F.fmtMs(F.summarize(session).effectiveMs), 2600);
+  deps.toast('记下了 · ' + F.fmtDur(F.summarize(session).effectiveMs), 2600);
 }
 
 function startTick() {
@@ -311,25 +343,36 @@ export function isFocusRunning() {
 
 /** 页面被杀掉之后接着上次继续 */
 export async function resumeIfAny() {
-  const rec = await findRunningSession();
-  if (!rec) return null;
+  const all = await allSessions();
+  const running = all
+    .filter(s => !s.endedAt)
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  if (!running.length) return null;
 
-  const s = F.fromRecord(rec);
+  /* 只接最近那一条。多余的（正常不会出现）先收掉 ——
+     两条计时器叠着算，时长会凭空变多，比少算还糟。 */
+  for (const extra of running.slice(1)) {
+    const o = F.fromRecord(extra);
+    F.endSession(o, o.lastTick || o.startedAt);
+    await putSession(F.toRecord(o));
+  }
+
+  const s = F.fromRecord(running[0]);
   const now = Date.now();
-  const sameDay = s.date === todayKey();
-  const fresh = now - s.startedAt < 12 * 3600 * 1000;
+  /* 该怎么办由 focus.js 的纯函数决定 —— 那段逻辑必须能被单测覆盖 */
+  const plan = F.resumePlan(s, { now, today: todayKey() });
 
-  if (!sameDay || !fresh) {
-    F.endSession(s, s.lastTick || s.startedAt);
+  if (!plan.resume) {
+    F.endSession(s, plan.stopAt);
     await putSession(F.toRecord(s));
     return null;
   }
 
-  if (F.isAway(s)) {
+  if (plan.away) {
+    /* 一直在「离开中」（多半是锁屏了）→ 这段时间照算 */
     F.markBack(s, now);
-  } else {
-    const gap = now - (s.lastTick || s.startedAt);
-    if (gap > 5000) F.addUnknown(s, gap);
+  } else if (plan.gapMs > 5000) {
+    F.addUnknown(s, plan.gapMs);
   }
 
   s.lastTick = now;

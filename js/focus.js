@@ -11,19 +11,17 @@
       你要的是：查个题、回个微信不用被打断。所以不停表。
       但账要记清楚：离开一次记一次，回来记一次。
 
-   3. 有效专注 = 总时长 − 长离开 − 未知时长
-      短离开（< 2 分钟）不计入扣减 —— 查题、上厕所、倒水都算正常范围。
+   3. 有效专注 = 总时长。**点了开始就一直算。**
+      锁屏、切走、换软件、页面被 iOS 回收，一律不扣，全都算数。
+      unknownMs 会照实记录，但从不参与计算。
 
    4. 严格模式：一离开就作废整个会话。适合考前冲刺，能骗自己都骗不了。
 
-   5. 页面被系统杀掉时无法得知中间发生了什么，那一段记成 unknownMs，
-      诚实标注，不假装。
+   5. 页面被系统杀掉时无法得知中间发生了什么，那一段记成 unknownMs。
+      诚实标注，但**照样算进时长** —— 宁可多算，不可少算。
 
    这个文件不碰 DOM，也不碰数据库，所以能在 Node 里直接单测。
    ═══════════════════════════════════════════════════════════ */
-
-/** 单次离开短于这个时长，不扣有效专注 */
-export const GRACE_MS = 2 * 60 * 1000;
 
 /* ── 建会话 ────────────────────────────────────────────── */
 
@@ -151,6 +149,47 @@ export function closeAllMarks(s, at) {
   return s;
 }
 
+/* ── 页面被杀掉之后重开 ────────────────────────────────────
+   这段逻辑太容易出错（丢时间就丢在这儿），所以从 focus-ui.js 抽出来
+   做成纯函数，这样能在 Node 里直接测。
+   ─────────────────────────────────────────────────────── */
+
+/** 一个计时器最多能跨这么久，超过就当成「忘关了」 */
+export const RESUME_MAX_MS = 12 * 3600 * 1000;
+
+/**
+ * 页面被 iOS 杀掉之后重开，这个会话该怎么办？
+ *
+ * @param {object} s
+ * @param {number} now
+ * @param {string|null} today  今天的日期键，用来判断跨天
+ * @returns {{resume:boolean, stopAt?:number, away?:boolean, gapMs?:number}}
+ */
+export function resumePlan(s, { now = Date.now(), today = null } = {}) {
+  const sameDay = today ? s.date === today : true;
+  const fresh = now - s.startedAt < RESUME_MAX_MS;
+
+  if (!sameDay || !fresh) {
+    /* 跨天了，或者一个计时器挂了大半天 —— 不再接着算。
+       结束在「最后一次还活着」的时刻，免得忘关的计时器把时长灌成假的。
+       注意 lastTick 最多只会比真实停下的时刻晚 20 秒（每 20 秒存一次盘），
+       所以这么收尾几乎不丢时间。 */
+    return {
+      resume: false,
+      stopAt: Math.max(s.lastTick || s.startedAt, s.startedAt),
+    };
+  }
+
+  const away = isAway(s);
+  return {
+    resume: true,
+    away,
+    /* 没记到「离开」就失联的那一段，照实记成 unknownMs 备查。
+       只是记下来 —— 不扣时长。 */
+    gapMs: away ? 0 : Math.max(0, now - (s.lastTick || s.startedAt)),
+  };
+}
+
 /* ── 结算 ──────────────────────────────────────────────── */
 
 /**
@@ -205,9 +244,13 @@ export function summarize(s, now = Date.now()) {
   const markMs = {};
   for (const m of marks) markMs[m.kind] = (markMs[m.kind] || 0) + m.ms;
 
-  /* 唯一还会扣的只有「页面被系统杀掉、无从得知」的那段。
-     离开（切走 / 息屏）一律不扣。 */
-  const effectiveMs = Math.max(0, totalMs - s.unknownMs);
+  /* 定了：**只要点了开始，时间就全算上**。
+     离开不扣、息屏不扣、换软件不扣，「页面被系统杀掉、无从得知」的那段
+     也不扣。以前这里扣一个 unknownMs，后果就是：你锁屏学习 90 分钟，
+     iOS 把页面回收，回来重开时那 90 分钟被当成「未知」扣光 ——
+     看着就像根本没计过时。unknownMs 仍然照实记下来备查，
+     但**不再参与算命**。 */
+  const effectiveMs = totalMs;
 
   return {
     totalMs,
@@ -241,41 +284,69 @@ function mergeIntervals(list) {
 }
 
 /**
+ * 日期键 'YYYY-MM-DD' → 那天 23:59:59.999 的时间戳。
+ * 认不出来就给 Infinity（测试里用的是 'D' 这种假日期）。
+ */
+function endOfDayMs(dateKey) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ''));
+  if (!m) return Infinity;
+  return new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59, 999).getTime();
+}
+
+/**
  * 一天里所有会话加起来的真实专注时长。
  *
- * 关键：先把各会话的「专注段」拿出来合并去重，再求和。
- * 直接相加的话，万一两条会话时间有重叠（手抖、多标签页），
- * 时长就被重复计算了，那个数字就是虚的。
+ * ⚠️ 这里踩过一个很贵的坑，写下来别再犯：
+ *
+ *   一开始是「把每条会话的 focus 段挑出来相加」。看着合理，其实是错的 ——
+ *   `segments` 里的 focus 段是**离开段之间**的缝隙。你锁屏学习的时候，
+ *   离开段把整条会话都吃掉了，focus 段只剩开头那几秒：
+ *
+ *       8:00 开始 → 8:00:05 锁屏 → 9:30 回来 → 停止
+ *       单条会话：有效 1h30m ✅
+ *       整天汇总：有效 0h00m ❌   ← 底部那行、时间轴、扇形图全读这个
+ *
+ *   所以改成：**整条会话的时间跨度都算**，只有「页面被系统杀掉、无从得知」
+ *   的那段扣掉。锁屏、切走、查题一律算数 —— 这是你要的规则。
+ *
+ *   跨度先合并去重再求和，免得两条会话时间重叠时把时长算虚。
  */
 export function dayFocus(sessions, { now = Date.now() } = {}) {
   const valid = sessions.filter(s => !s.interrupted);
 
-  const focusIvs = [];
+  const spans = [];
   let totalMs = 0;
   let awayCount = 0;
-  let longAwayCount = 0;
   let awayMs = 0;
+  let unknownMs = 0;
 
   for (const s of valid) {
     const r = summarize(s, now);
     totalMs += r.totalMs;
     awayCount += r.awayCount;
-    longAwayCount += r.longAwayCount;
     awayMs += r.awayMs;
-    for (const seg of r.segments) {
-      if (seg.kind === 'focus') focusIvs.push({ from: seg.from, to: seg.to });
-    }
+    unknownMs += r.unknownMs;
+
+    const end = s.endedAt ?? now;
+    /* 还在跑的会话算到此刻，但**不许越出它自己那一天**。
+       万一有个僵尸会话跨了好几天还没被收掉（resume 出过错才会发生），
+       不设这个上界的话它会把整天撑成几十个小时。 */
+    const stop = Math.min(end, endOfDayMs(s.date));
+    if (stop > s.startedAt) spans.push({ from: s.startedAt, to: stop });
   }
 
-  const merged = mergeIntervals(focusIvs);
-  const effectiveMs = merged.reduce((sum, iv) => sum + (iv.to - iv.from), 0);
+  const merged = mergeIntervals(spans);
+  const spanMs = merged.reduce((sum, iv) => sum + (iv.to - iv.from), 0);
+  /* 同 summarize：一分不扣。unknownMs 只记不用。 */
+  const effectiveMs = spanMs;
 
   return {
     effectiveMs,
+    spanMs,
     totalMs,
     awayMs,
+    unknownMs,
     awayCount,
-    longAwayCount,
     intervalCount: merged.length,
     sessionCount: valid.length,
     interruptedCount: sessions.length - valid.length,
@@ -300,11 +371,29 @@ export function byBlock(sessions, { now = Date.now() } = {}) {
 
 /* ── 小工具 ────────────────────────────────────────────── */
 
+/** 「时+分」，比如 1h31m。适合一整天的量。 */
 export function fmtMs(ms) {
   const t = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(t / 3600);
   const m = Math.floor((t % 3600) / 60);
   return `${h}h${String(m).padStart(2, '0')}m`;
+}
+
+/**
+ * **给人看的时长** —— 屏幕上一律用这个，别直接用 fmtMs。
+ *
+ * 为什么非要有这么一个函数：
+ *   fmtMs(13 秒) 返回 "0h00m"。计时器上明明走着 00:00:13，
+ *   总结页却写 0h00m —— 看着就是「根本没记上」。
+ *   这个坑踩过两次（一次在底部那行，一次在扇形图），
+ *   所以干脆统一成一个函数，所有地方都走它。
+ */
+export function fmtDur(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  if (t <= 0) return '0h00m';      // 一点都没有，保持老样子
+  if (t < 60) return `${t}s`;      // 不满一分钟，直接报秒
+  if (t < 3600) return `${Math.floor(t / 60)}m`;   // 不满一小时，报分
+  return fmtMs(ms);
 }
 
 export function pct(ratio) {
